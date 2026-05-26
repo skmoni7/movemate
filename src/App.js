@@ -6,6 +6,7 @@ import AuthPage from './components/AuthPage';
 import HomePage from './components/HomePage';
 import RoomPage from './components/RoomPage';
 import NavBar from './components/NavBar';
+import { Analytics } from '@vercel/analytics/react';
 
 export const AuthContext = React.createContext(null);
 
@@ -38,6 +39,7 @@ function App() {
           </Routes>
         </div>
       </Router>
+      <Analytics />
     </AuthContext.Provider>
   );
 }
