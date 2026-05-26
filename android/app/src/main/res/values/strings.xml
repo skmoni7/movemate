@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">MoveMate</string>
+    <string name="login">Log In</string>
+    <string name="register">Create Account</string>
+    <string name="forgot_password">Forgot Password?</string>
+    <string name="email">Email</string>
+    <string name="password">Password</string>
+    <string name="add_room">Add Room</string>
+    <string name="add_item">Add Item</string>
+    <string name="edit_item">Edit Item</string>
+    <string name="name_required">Name is required</string>
+    <string name="save">Save</string>
+    <string name="cancel">Cancel</string>
+    <string name="delete">Delete</string>
+    <string name="no_rooms">No rooms yet. Tap + to add one.</string>
+    <string name="no_items">No items yet. Tap + to add one.</string>
+    <string name="summary">Summary</string>
+    <string name="total_items">Total Items</string>
+    <string name="moving_items">Moving Items</string>
+
+    <!-- Value bands matching web app -->
+    <string-array name="value_bands">
+        <item>Low ($0–$500)</item>
+        <item>Medium ($500–$2,000)</item>
+        <item>High ($2,000–$10,000)</item>
+        <item>Premium ($10,000+)</item>
+    </string-array>
+</resources>
