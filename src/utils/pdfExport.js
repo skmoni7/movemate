@@ -82,8 +82,7 @@ export function exportByBox(rooms, allItems, moveTitle) {
   // Group items by boxNumber
   const boxMap = {};
   allItems.forEach(item => {
-    const key = (item.boxNumber && item.boxNumber.trim() !== '') ? item.boxNumber.trim().toUpperCase() : null;
-    if (key) {
+    const key = (item.boxNumber && item.boxNumber.trim() !== '' && item.boxNumber.trim().toUpperCase() !== 'NA') ? item.boxNumber.trim().toUpperCase() : null;    if (key) {
       if (!boxMap[key]) boxMap[key] = [];
       boxMap[key].push(item);
     }
