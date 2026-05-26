@@ -4,7 +4,7 @@ import { collection, addDoc, onSnapshot, deleteDoc, doc, query, orderBy } from '
 import { db } from '../firebase';
 import { AuthContext } from '../App';
 import { VALUE_BANDS, ROOM_SUGGESTIONS, ROOM_ICONS, getSummary } from '../utils';
-import { exportToPDF } from '../utils/pdfExport';
+import { exportByRoom, exportByBox } from '../utils/pdfExport';
 
 export default function HomePage() {
   const user = useContext(AuthContext);
@@ -16,7 +16,7 @@ export default function HomePage() {
   const [moveTitle, setMoveTitle] = useState('My Move');
   const [editTitle, setEditTitle] = useState(false);
   const [loading, setLoading] = useState(true);
-
+  const [showExportModal, setShowExportModal] = useState(false);
   const roomsRef = collection(db, 'users', user.uid, 'rooms');
 
   useEffect(() => {
@@ -60,7 +60,6 @@ export default function HomePage() {
   const totalSummary = getSummary(allItems.filter(i => !i.leaveBehind));
   const leaveBehindItems = allItems.filter(i => i.leaveBehind);
   const leaveBehindSummary = getSummary(leaveBehindItems);
-
   const getRoomItems = (roomId) => allItems.filter(i => i.roomId === roomId && !i.leaveBehind);
   const getRoomLeaveBehind = (roomId) => allItems.filter(i => i.roomId === roomId && i.leaveBehind);
 
@@ -84,10 +83,10 @@ export default function HomePage() {
               {moveTitle} <span style={{ fontSize: 16, color: '#a0aec0' }}>✏️</span>
             </h1>
           )}
-          <p style={{ color: '#718096', fontSize: 14, marginTop: 2 }}>{rooms.length} rooms &bull; {allItems.filter(i => !i.leaveBehind).length} items to move</p>
+          <p style={{ color: '#718096', fontSize: 14, marginTop: 2 }}>{rooms.length} rooms • {allItems.filter(i => !i.leaveBehind).length} items to move</p>
         </div>
         <div style={{ display: 'flex', gap: 10 }}>
-          <button className="btn btn-ghost" onClick={() => exportToPDF(rooms, allItems, moveTitle)}>
+          <button className="btn btn-ghost" onClick={() => setShowExportModal(true)}>
             📄 Export PDF
           </button>
           <button className="btn btn-primary" onClick={() => setShowAddRoom(true)}>
@@ -133,7 +132,7 @@ export default function HomePage() {
                 <Link to={`/room/${room.id}`} className="room-card" state={{ roomName: room.name, roomIcon: room.icon }}>
                   <div className="room-card-icon">{room.icon}</div>
                   <div className="room-card-name">{room.name}</div>
-                  <div className="room-card-count">{items.length} items to move{lb.length > 0 ? ` · ${lb.length} leaving` : ''}</div>
+                  <div className="room-card-count">{items.length} items to move{lb.length > 0 ? ` • ${lb.length} leaving` : ''}</div>
                   <div className="summary-strip">
                     {VALUE_BANDS.map((b, i) => summary[i] > 0 && (
                       <span key={i} className={`summary-chip vc-${i}`}>{b.short}: {summary[i]}</span>
@@ -170,6 +169,44 @@ export default function HomePage() {
         </div>
       )}
 
+      {/* Export Modal */}
+      {showExportModal && (
+        <div className="modal-overlay" onClick={() => setShowExportModal(false)}>
+          <div className="modal-box" onClick={e => e.stopPropagation()} style={{ maxWidth: 460 }}>
+            <div className="modal-header">
+              <h2 className="modal-title">📄 Export Inventory</h2>
+              <button style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: '#718096' }} onClick={() => setShowExportModal(false)}>✕</button>
+            </div>
+            <p style={{ fontSize: 14, color: '#64748b', marginBottom: 20 }}>Choose how you'd like to organize your PDF export</p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <button
+                className="btn"
+                onClick={() => { exportByRoom(rooms, allItems, moveTitle); setShowExportModal(false); }}
+                style={{ padding: '14px 18px', background: '#eff6ff', color: '#1e40af', border: '1.5px solid #bfdbfe', textAlign: 'left', display: 'flex', alignItems: 'flex-start', gap: 12, fontSize: 14 }}
+              >
+                <span style={{ fontSize: 20 }}>🛏️</span>
+                <div>
+                  <div style={{ fontWeight: 700, marginBottom: 2 }}>By Room</div>
+                  <div style={{ fontSize: 12, opacity: 0.8 }}>Group items by each room (Kitchen, Bedroom, etc.)</div>
+                </div>
+              </button>
+              <button
+                className="btn"
+                onClick={() => { exportByBox(rooms, allItems, moveTitle); setShowExportModal(false); }}
+                style={{ padding: '14px 18px', background: '#fef3c7', color: '#92400e', border: '1.5px solid #fde68a', textAlign: 'left', display: 'flex', alignItems: 'flex-start', gap: 12, fontSize: 14 }}
+              >
+                <span style={{ fontSize: 20 }}>📦</span>
+                <div>
+                  <div style={{ fontWeight: 700, marginBottom: 2 }}>By Box Number</div>
+                  <div style={{ fontSize: 12, opacity: 0.8 }}>Group items by box number (Box 1, Box 2, etc.)</div>
+                </div>
+              </button>
+            </div>
+            <p style={{ fontSize: 11, color: '#94a3b8', marginTop: 16 }}>Items without a room or box will be listed under "Uncategorised"</p>
+          </div>
+        </div>
+      )}
+
       {/* Add Room Modal */}
       {showAddRoom && (
         <div className="modal-overlay" onClick={() => setShowAddRoom(false)}>
@@ -178,7 +215,6 @@ export default function HomePage() {
               <h2 className="modal-title">Add Room</h2>
               <button style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: '#718096' }} onClick={() => setShowAddRoom(false)}>✕</button>
             </div>
-
             <div className="form-group">
               <label>Room Name</label>
               <input
@@ -190,7 +226,6 @@ export default function HomePage() {
                 autoFocus
               />
             </div>
-
             <div className="form-group">
               <label>Icon</label>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
@@ -203,7 +238,6 @@ export default function HomePage() {
                 ))}
               </div>
             </div>
-
             <div className="form-group">
               <label>Suggestions</label>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
@@ -218,7 +252,6 @@ export default function HomePage() {
                 ))}
               </div>
             </div>
-
             <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 8 }}>
               <button className="btn btn-ghost" onClick={() => setShowAddRoom(false)}>Cancel</button>
               <button className="btn btn-primary" onClick={addRoom} disabled={!roomName.trim()}>Add Room</button>
