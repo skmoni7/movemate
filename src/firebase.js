@@ -4,13 +4,13 @@ import { getFirestore } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 
 const firebaseConfig = {
-  apiKey: "AIzaSyAc6sewcJJd3irf3Zn-H2BrUKQN62rLRuk",
-  authDomain: "movemate-41c23.firebaseapp.com",
-  projectId: "movemate-41c23",
-  storageBucket: "movemate-41c23.firebasestorage.app",
-  messagingSenderId: "303841763736",
-  appId: "1:303841763736:web:c2fd898156bf4ae832cbed",
-  measurementId: "G-B54EYZKW5J"
+  apiKey: process.env.REACT_APP_FIREBASE_API_KEY,
+  authDomain: process.env.REACT_APP_FIREBASE_AUTH_DOMAIN,
+  projectId: process.env.REACT_APP_FIREBASE_PROJECT_ID,
+  storageBucket: process.env.REACT_APP_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: process.env.REACT_APP_FIREBASE_MESSAGING_SENDER_ID,
+  appId: process.env.REACT_APP_FIREBASE_APP_ID,
+  measurementId: process.env.REACT_APP_FIREBASE_MEASUREMENT_ID,
 };
 
 const app = initializeApp(firebaseConfig);
