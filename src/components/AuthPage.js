@@ -1,16 +1,65 @@
 import React, { useState } from 'react';
-import { signInWithPopup } from 'firebase/auth';
-import { auth, googleProvider, githubProvider } from '../firebase';
+import {
+  signInWithPopup,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  setPersistence,
+  browserLocalPersistence,
+  browserSessionPersistence,
+} from 'firebase/auth';
+import { auth, googleProvider } from '../firebase';
 
 export default function AuthPage() {
+  const [mode, setMode] = useState('login'); // 'login' | 'register'
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [rememberMe, setRememberMe] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const signIn = async (provider) => {
+  const applyPersistence = async () => {
+    if (rememberMe) {
+      await setPersistence(auth, browserLocalPersistence);
+    } else {
+      await setPersistence(auth, browserSessionPersistence);
+    }
+  };
+
+  const handleEmailAuth = async (e) => {
+    e.preventDefault();
+    setError('');
+    if (mode === 'register' && password !== confirmPassword) {
+      setError('Passwords do not match.');
+      return;
+    }
+    setLoading(true);
+    try {
+      await applyPersistence();
+      if (mode === 'login') {
+        await signInWithEmailAndPassword(auth, email, password);
+      } else {
+        await createUserWithEmailAndPassword(auth, email, password);
+      }
+    } catch (e) {
+      const msg = e.code === 'auth/user-not-found' || e.code === 'auth/wrong-password'
+        ? 'Invalid email or password.'
+        : e.code === 'auth/email-already-in-use'
+        ? 'An account with this email already exists.'
+        : e.code === 'auth/weak-password'
+        ? 'Password must be at least 6 characters.'
+        : e.message;
+      setError(msg);
+    }
+    setLoading(false);
+  };
+
+  const signInWithGoogle = async () => {
     setError('');
     setLoading(true);
     try {
-      await signInWithPopup(auth, provider);
+      await applyPersistence();
+      await signInWithPopup(auth, googleProvider);
     } catch (e) {
       setError(e.message);
     }
@@ -20,17 +69,92 @@ export default function AuthPage() {
   return (
     <div className="auth-page">
       <div className="auth-card">
-        <div className="auth-logo">📦</div>
+        <div className="auth-logo">🚚</div>
         <h1 className="auth-title">MoveMate</h1>
         <p className="auth-subtitle">Your smart moving inventory tracker</p>
 
         {error && (
-          <div style={{ background: '#fee2e2', color: '#991b1b', padding: '12px 16px', borderRadius: '10px', fontSize: '13px', marginBottom: '16px', textAlign: 'left' }}>
+          <div style={{ background: '#fee2e2', color: '#991b1b', padding: '10px 14px', borderRadius: '8px', fontSize: '13px', marginBottom: '14px', textAlign: 'left' }}>
             {error}
           </div>
         )}
 
-        <button className="auth-btn auth-btn-google" onClick={() => signIn(googleProvider)} disabled={loading}>
+        {/* Tab toggle */}
+        <div style={{ display: 'flex', marginBottom: '20px', borderRadius: '10px', overflow: 'hidden', border: '1px solid #e2e8f0' }}>
+          <button
+            onClick={() => { setMode('login'); setError(''); }}
+            style={{ flex: 1, padding: '10px', border: 'none', cursor: 'pointer', fontWeight: 600, fontSize: '14px', background: mode === 'login' ? '#2563eb' : '#f8fafc', color: mode === 'login' ? 'white' : '#64748b', transition: 'all 0.2s' }}
+          >Sign In</button>
+          <button
+            onClick={() => { setMode('register'); setError(''); }}
+            style={{ flex: 1, padding: '10px', border: 'none', cursor: 'pointer', fontWeight: 600, fontSize: '14px', background: mode === 'register' ? '#2563eb' : '#f8fafc', color: mode === 'register' ? 'white' : '#64748b', transition: 'all 0.2s' }}
+          >Create Account</button>
+        </div>
+
+        <form onSubmit={handleEmailAuth}>
+          <div style={{ marginBottom: '12px' }}>
+            <input
+              type="email"
+              placeholder="Email address"
+              value={email}
+              onChange={e => setEmail(e.target.value)}
+              required
+              style={{ width: '100%', padding: '10px 14px', borderRadius: '8px', border: '1.5px solid #e2e8f0', fontSize: '14px', outline: 'none', boxSizing: 'border-box' }}
+            />
+          </div>
+          <div style={{ marginBottom: '12px' }}>
+            <input
+              type="password"
+              placeholder="Password"
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+              required
+              style={{ width: '100%', padding: '10px 14px', borderRadius: '8px', border: '1.5px solid #e2e8f0', fontSize: '14px', outline: 'none', boxSizing: 'border-box' }}
+            />
+          </div>
+          {mode === 'register' && (
+            <div style={{ marginBottom: '12px' }}>
+              <input
+                type="password"
+                placeholder="Confirm password"
+                value={confirmPassword}
+                onChange={e => setConfirmPassword(e.target.value)}
+                required
+                style={{ width: '100%', padding: '10px 14px', borderRadius: '8px', border: '1.5px solid #e2e8f0', fontSize: '14px', outline: 'none', boxSizing: 'border-box' }}
+              />
+            </div>
+          )}
+
+          {/* Remember me */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
+            <input
+              type="checkbox"
+              id="rememberMe"
+              checked={rememberMe}
+              onChange={e => setRememberMe(e.target.checked)}
+              style={{ width: '16px', height: '16px', cursor: 'pointer', accentColor: '#2563eb' }}
+            />
+            <label htmlFor="rememberMe" style={{ fontSize: '13px', color: '#475569', cursor: 'pointer' }}>
+              Remember me for 30 days
+            </label>
+          </div>
+
+          <button
+            type="submit"
+            disabled={loading}
+            style={{ width: '100%', padding: '11px', background: '#2563eb', color: 'white', border: 'none', borderRadius: '8px', fontSize: '15px', fontWeight: 600, cursor: loading ? 'not-allowed' : 'pointer', opacity: loading ? 0.7 : 1, marginBottom: '14px' }}
+          >
+            {loading ? 'Please wait...' : mode === 'login' ? 'Sign In' : 'Create Account'}
+          </button>
+        </form>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '14px' }}>
+          <div style={{ flex: 1, height: '1px', background: '#e2e8f0' }} />
+          <span style={{ fontSize: '12px', color: '#94a3b8' }}>or continue with</span>
+          <div style={{ flex: 1, height: '1px', background: '#e2e8f0' }} />
+        </div>
+
+        <button className="auth-btn auth-btn-google" onClick={signInWithGoogle} disabled={loading}>
           <svg width="20" height="20" viewBox="0 0 24 24">
             <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
             <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
@@ -40,14 +164,7 @@ export default function AuthPage() {
           {loading ? 'Signing in...' : 'Continue with Google'}
         </button>
 
-        <button className="auth-btn auth-btn-github" onClick={() => signIn(githubProvider)} disabled={loading}>
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/>
-          </svg>
-          {loading ? 'Signing in...' : 'Continue with GitHub'}
-        </button>
-
-        <p style={{ fontSize: '12px', color: '#a0aec0', marginTop: '24px' }}>
+        <p style={{ textAlign: 'center', fontSize: '12px', color: '#94a3b8', marginTop: '20px' }}>
           Sign in to sync your inventory across all devices
         </p>
       </div>
