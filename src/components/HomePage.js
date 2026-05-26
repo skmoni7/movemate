@@ -13,8 +13,7 @@ export default function HomePage() {
   const [showAddRoom, setShowAddRoom] = useState(false);
   const [roomName, setRoomName] = useState('');
   const [roomIcon, setRoomIcon] = useState('🛏️');
-  const [moveTitle, setMoveTitle] = useState('My Move');
-  const [editTitle, setEditTitle] = useState(false);
+  const [moveTitle, setMoveTitle] = useState(() => localStorage.getItem('moveTitle') || 'My Move');  const [editTitle, setEditTitle] = useState(false);
   const [loading, setLoading] = useState(true);
   const [showExportModal, setShowExportModal] = useState(false);
   const roomsRef = collection(db, 'users', user.uid, 'rooms');
@@ -42,6 +41,10 @@ export default function HomePage() {
     });
     return () => unsubs.forEach(u => u());
   }, [rooms, user.uid]);
+
+    useEffect(() => {
+    localStorage.setItem('moveTitle', moveTitle);
+  }, [moveTitle]);
 
   const addRoom = async () => {
     if (!roomName.trim()) return;
