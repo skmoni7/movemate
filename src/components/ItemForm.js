@@ -20,7 +20,8 @@ export default function ItemForm({ initial, onSave, onClose }) {
   const [photoPreview, setPhotoPreview] = useState(initial?.photoURL || null);
   const [errors, setErrors] = useState({});
   const [saving, setSaving] = useState(false);
-  const fileRef = useRef();
+  const cameraRef = useRef();
+  const galleryRef = useRef();
 
   // Gemini AI suggestion state
   const [suggestions, setSuggestions] = useState([]);
@@ -97,13 +98,16 @@ export default function ItemForm({ initial, onSave, onClose }) {
     if (!file) return;
     setPhotoFile(file);
     setPhotoPreview(URL.createObjectURL(file));
+    // reset input so same file can be re-selected
+    e.target.value = '';
   };
 
   const removePhoto = () => {
     setPhotoFile(null);
     setPhotoPreview(null);
     setForm(f => ({ ...f, photoURL: null, photoPath: null }));
-    if (fileRef.current) fileRef.current.value = '';
+    if (cameraRef.current) cameraRef.current.value = '';
+    if (galleryRef.current) galleryRef.current.value = '';
   };
 
   const handleSubmit = async () => {
@@ -229,21 +233,64 @@ export default function ItemForm({ initial, onSave, onClose }) {
         <div className="form-group">
           <label>Photo <span style={{ fontWeight: 400, color: '#718096', fontSize: 12 }}>(optional)</span></label>
           {photoPreview ? (
-            <div style={{ position: 'relative' }}>
-              <img src={photoPreview} alt="preview" className="photo-preview" />
+            <div style={{ position: 'relative', display: 'inline-block' }}>
+              <img src={photoPreview} alt="preview" className="photo-preview" style={{ display: 'block' }} />
               <button
                 onClick={removePhoto}
-                style={{ position: 'absolute', top: 18, right: 8, background: '#ef4444', color: 'white', border: 'none', borderRadius: '50%', width: 26, height: 26, cursor: 'pointer', fontSize: 14, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                style={{ position: 'absolute', top: 8, right: 8, background: '#ef4444', color: 'white', border: 'none', borderRadius: '50%', width: 28, height: 28, cursor: 'pointer', fontSize: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 6px rgba(0,0,0,0.2)' }}
               >✕</button>
             </div>
           ) : (
-            <div className="photo-upload-area" onClick={() => fileRef.current?.click()}>
-              <div style={{ fontSize: 28, marginBottom: 6 }}>📷</div>
-              <div style={{ fontSize: 13, color: '#718096' }}>Click to upload photo</div>
-              <div style={{ fontSize: 11, color: '#a0aec0', marginTop: 4 }}>JPG, PNG, WEBP supported</div>
+            <div style={{ display: 'flex', gap: 10 }}>
+              {/* Take Photo — opens rear camera on mobile */}
+              <button
+                type="button"
+                onClick={() => cameraRef.current?.click()}
+                style={{
+                  flex: 1, padding: '14px 10px', border: '2px dashed #93c5fd',
+                  borderRadius: 10, background: '#eff6ff', cursor: 'pointer',
+                  display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6
+                }}
+              >
+                <span style={{ fontSize: 26 }}>📷</span>
+                <span style={{ fontSize: 13, fontWeight: 600, color: '#2563eb' }}>Take Photo</span>
+                <span style={{ fontSize: 11, color: '#94a3b8' }}>Opens camera</span>
+              </button>
+
+              {/* Choose from Gallery */}
+              <button
+                type="button"
+                onClick={() => galleryRef.current?.click()}
+                style={{
+                  flex: 1, padding: '14px 10px', border: '2px dashed #d1d5db',
+                  borderRadius: 10, background: '#f9fafb', cursor: 'pointer',
+                  display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6
+                }}
+              >
+                <span style={{ fontSize: 26 }}>🖼️</span>
+                <span style={{ fontSize: 13, fontWeight: 600, color: '#374151' }}>From Library</span>
+                <span style={{ fontSize: 11, color: '#94a3b8' }}>Choose existing</span>
+              </button>
             </div>
           )}
-          <input ref={fileRef} type="file" accept="image/*" capture="environment" onChange={handlePhoto} style={{ display: 'none' }} />
+
+          {/* Camera input — triggers rear camera on mobile */}
+          <input
+            ref={cameraRef}
+            type="file"
+            accept="image/*"
+            capture="environment"
+            onChange={handlePhoto}
+            style={{ display: 'none' }}
+          />
+          {/* Gallery input — no capture, shows full file picker / photo library */}
+          <input
+            ref={galleryRef}
+            type="file"
+            accept="image/*"
+            onChange={handlePhoto}
+            style={{ display: 'none' }}
+          />
         </div>
 
         {/* Storage Toggle */}
