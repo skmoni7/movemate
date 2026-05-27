@@ -67,7 +67,7 @@ export default function RoomPage() {
   const { id: roomId } = useParams(); // This maps the URL 'id' to your 'roomId' variable
   const location = useLocation();
   const roomName = location.state?.roomName || roomId;
-  const { user } = useContext(AuthContext);
+  const user = useContext(AuthContext);
 
   const [items, setItems] = useState([]);
   const [showForm, setShowForm] = useState(false);
