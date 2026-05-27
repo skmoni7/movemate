@@ -4,7 +4,7 @@ import { collection, addDoc, onSnapshot, deleteDoc, doc, updateDoc, query, order
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { db, storage } from '../firebase';
 import { AuthContext } from '../App';
-import { VALUE_BANDS, getSummary, validateBoxNumber } from '../utils';
+import { VALUE_BANDS, getSummary } from '../utils';
 import ItemForm from './ItemForm';
 
 export default function RoomPage() {
@@ -18,6 +18,7 @@ export default function RoomPage() {
   const [showForm, setShowForm] = useState(false);
   const [editItem, setEditItem] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [uploadingIds, setUploadingIds] = useState(new Set());
 
   const itemsRef = collection(db, 'users', user.uid, 'rooms', roomId, 'items');
 
@@ -30,39 +31,62 @@ export default function RoomPage() {
     return unsub;
   }, [roomId, user.uid]);
 
-  const saveItem = async (formData, photoFile) => {
-    let photoURL = formData.photoURL || null;
-    let photoPath = formData.photoPath || null;
-
-    if (photoFile) {
-      // Delete old photo if replacing
-      if (photoPath) {
-        try { await deleteObject(ref(storage, photoPath)); } catch (_) {}
+  // Upload photo in background after item is saved, then update Firestore record
+  const uploadPhotoInBackground = async (itemDocId, photoFile, oldPhotoPath) => {
+    setUploadingIds(prev => new Set(prev).add(itemDocId));
+    try {
+      if (oldPhotoPath) {
+        try { await deleteObject(ref(storage, oldPhotoPath)); } catch (_) {}
       }
       const safeFileName = photoFile.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-      photoPath = `users/${user.uid}/rooms/${roomId}/${Date.now()}_${safeFileName}`;
-      try {
-        const storageRef = ref(storage, photoPath);
-        const uploadSnap = await uploadBytes(storageRef, photoFile);
-        photoURL = await getDownloadURL(uploadSnap.ref);
-      } catch (err) {
-        console.error('Photo upload failed:', err);
-        photoURL = null;
-        photoPath = null;
-      }
+      const photoPath = `users/${user.uid}/rooms/${roomId}/${Date.now()}_${safeFileName}`;
+      const storageRef = ref(storage, photoPath);
+      const uploadSnap = await uploadBytes(storageRef, photoFile);
+      const photoURL = await getDownloadURL(uploadSnap.ref);
+      await updateDoc(doc(db, 'users', user.uid, 'rooms', roomId, 'items', itemDocId), {
+        photoURL,
+        photoPath,
+        updatedAt: Date.now()
+      });
+    } catch (err) {
+      console.error('Background photo upload failed:', err);
+    } finally {
+      setUploadingIds(prev => { const s = new Set(prev); s.delete(itemDocId); return s; });
     }
+  };
 
-    // Strip internal-only fields before saving
+  const saveItem = async (formData, photoFile) => {
+    // Strip internal-only fields
     const { _newPhotoFile, ...cleanData } = formData;
-    const data = { ...cleanData, photoURL, photoPath, roomId, updatedAt: Date.now() };
 
+    // Save item immediately without waiting for photo upload
+    const data = {
+      ...cleanData,
+      // Keep existing photoURL/photoPath if no new file selected
+      photoURL: photoFile ? null : (cleanData.photoURL || null),
+      photoPath: photoFile ? null : (cleanData.photoPath || null),
+      roomId,
+      updatedAt: Date.now()
+    };
+
+    let itemDocId;
     if (editItem) {
+      itemDocId = editItem.id;
       await updateDoc(doc(db, 'users', user.uid, 'rooms', roomId, 'items', editItem.id), data);
     } else {
-      await addDoc(itemsRef, { ...data, createdAt: Date.now() });
+      const docRef = await addDoc(itemsRef, { ...data, createdAt: Date.now() });
+      itemDocId = docRef.id;
     }
+
+    // Close modal immediately
     setShowForm(false);
     setEditItem(null);
+
+    // Upload photo in background if one was selected
+    if (photoFile && itemDocId) {
+      const oldPath = editItem?.photoPath || null;
+      uploadPhotoInBackground(itemDocId, photoFile, oldPath);
+    }
   };
 
   const deleteItem = async (item) => {
@@ -124,6 +148,7 @@ export default function RoomPage() {
               item={item}
               onEdit={() => { setEditItem(item); setShowForm(true); }}
               onDelete={() => deleteItem(item)}
+              uploading={uploadingIds.has(item.id)}
             />
           ))}
           {leaveBehindItems.length > 0 && (
@@ -138,6 +163,7 @@ export default function RoomPage() {
                   item={item}
                   onEdit={() => { setEditItem(item); setShowForm(true); }}
                   onDelete={() => deleteItem(item)}
+                  uploading={uploadingIds.has(item.id)}
                 />
               ))}
             </>
@@ -158,19 +184,29 @@ export default function RoomPage() {
   );
 }
 
-function ItemCard({ item, onEdit, onDelete }) {
+function ItemCard({ item, onEdit, onDelete, uploading }) {
   const band = VALUE_BANDS[item.valueBand] || VALUE_BANDS[0];
   return (
     <div className={`item-card${item.leaveBehind ? ' leave-behind' : ''}`} style={{ padding: '10px 14px' }}>
       {/* Thumbnail */}
-      {item.photoURL ? (
-        <img src={item.photoURL} alt={item.name} style={{ width: 64, height: 64, borderRadius: 8, objectFit: 'cover', flexShrink: 0 }} />
-      ) : (
-        <div style={{ width: 64, height: 64, background: '#f3f4f6', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24, flexShrink: 0 }}>📦</div>
-      )}
+      <div style={{ position: 'relative', flexShrink: 0 }}>
+        {item.photoURL ? (
+          <img src={item.photoURL} alt={item.name} style={{ width: 64, height: 64, borderRadius: 8, objectFit: 'cover', display: 'block' }} />
+        ) : (
+          <div style={{ width: 64, height: 64, background: '#f3f4f6', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24 }}>📦</div>
+        )}
+        {uploading && (
+          <div style={{
+            position: 'absolute', inset: 0, background: 'rgba(255,255,255,0.75)',
+            borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center'
+          }}>
+            <div style={{ width: 20, height: 20, border: '2.5px solid #e2e8f0', borderTop: '2.5px solid #2563eb', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} />
+          </div>
+        )}
+      </div>
 
       <div className="item-card-body" style={{ gap: 4 }}>
-        {/* Line 1: Name + storage/lb badges */}
+        {/* Line 1: Name + badges */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
           <span className="item-card-title" style={{ fontSize: 15, fontWeight: 700 }}>{item.name}</span>
           {item.isStorage && (
@@ -179,9 +215,12 @@ function ItemCard({ item, onEdit, onDelete }) {
           {item.leaveBehind && (
             <span style={{ background: '#fee2e2', color: '#991b1b', borderRadius: 999, fontSize: 11, fontWeight: 700, padding: '2px 8px' }}>🚫 Leave Behind</span>
           )}
+          {uploading && (
+            <span style={{ background: '#dbeafe', color: '#1d4ed8', borderRadius: 999, fontSize: 11, fontWeight: 600, padding: '2px 8px' }}>⏳ Uploading photo...</span>
+          )}
         </div>
 
-        {/* Line 2: Qty + Value + Box + actions */}
+        {/* Line 2: Qty + Value + Box + notes + actions */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
           <span className="badge badge-gray" style={{ fontSize: 12 }}>Qty: {item.quantity}</span>
           <span className={`badge vc-${item.valueBand}`} style={{ fontSize: 12 }}>{band.label}</span>
@@ -193,6 +232,8 @@ function ItemCard({ item, onEdit, onDelete }) {
           </div>
         </div>
       </div>
+
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
     </div>
   );
 }
