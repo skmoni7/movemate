@@ -35,15 +35,26 @@ export default function RoomPage() {
     let photoPath = formData.photoPath || null;
 
     if (photoFile) {
+      // Delete old photo if replacing
       if (photoPath) {
         try { await deleteObject(ref(storage, photoPath)); } catch (_) {}
       }
-      photoPath = `users/${user.uid}/rooms/${roomId}/${Date.now()}_${photoFile.name}`;
-      const snap = await uploadBytes(ref(storage, photoPath), photoFile);
-      photoURL = await getDownloadURL(snap.ref);
+      const safeFileName = photoFile.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+      photoPath = `users/${user.uid}/rooms/${roomId}/${Date.now()}_${safeFileName}`;
+      try {
+        const storageRef = ref(storage, photoPath);
+        const uploadSnap = await uploadBytes(storageRef, photoFile);
+        photoURL = await getDownloadURL(uploadSnap.ref);
+      } catch (err) {
+        console.error('Photo upload failed:', err);
+        photoURL = null;
+        photoPath = null;
+      }
     }
 
-    const data = { ...formData, photoURL, photoPath, roomId, updatedAt: Date.now() };
+    // Strip internal-only fields before saving
+    const { _newPhotoFile, ...cleanData } = formData;
+    const data = { ...cleanData, photoURL, photoPath, roomId, updatedAt: Date.now() };
 
     if (editItem) {
       await updateDoc(doc(db, 'users', user.uid, 'rooms', roomId, 'items', editItem.id), data);
@@ -60,12 +71,6 @@ export default function RoomPage() {
       try { await deleteObject(ref(storage, item.photoPath)); } catch (_) {}
     }
     await deleteDoc(doc(db, 'users', user.uid, 'rooms', roomId, 'items', item.id));
-  };
-
-  const toggleLeaveBehind = async (item) => {
-    await updateDoc(doc(db, 'users', user.uid, 'rooms', roomId, 'items', item.id), {
-      leaveBehind: !item.leaveBehind
-    });
   };
 
   const activeItems = items.filter(i => !i.leaveBehind);
@@ -112,15 +117,29 @@ export default function RoomPage() {
           <button className="btn btn-primary" onClick={() => setShowForm(true)}>+ Add First Item</button>
         </div>
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 24 }}>
-          {activeItems.map(item => <ItemCard key={item.id} item={item} onEdit={() => { setEditItem(item); setShowForm(true); }} onDelete={() => deleteItem(item)} onToggleLB={() => toggleLeaveBehind(item)} />)}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 24 }}>
+          {activeItems.map(item => (
+            <ItemCard
+              key={item.id}
+              item={item}
+              onEdit={() => { setEditItem(item); setShowForm(true); }}
+              onDelete={() => deleteItem(item)}
+            />
+          ))}
           {leaveBehindItems.length > 0 && (
             <>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '8px 0' }}>
                 <span style={{ fontSize: 16 }}>🚫</span>
                 <span style={{ fontWeight: 700, color: '#991b1b', fontSize: 15 }}>Leave Behind ({leaveBehindItems.length})</span>
               </div>
-              {leaveBehindItems.map(item => <ItemCard key={item.id} item={item} onEdit={() => { setEditItem(item); setShowForm(true); }} onDelete={() => deleteItem(item)} onToggleLB={() => toggleLeaveBehind(item)} />)}
+              {leaveBehindItems.map(item => (
+                <ItemCard
+                  key={item.id}
+                  item={item}
+                  onEdit={() => { setEditItem(item); setShowForm(true); }}
+                  onDelete={() => deleteItem(item)}
+                />
+              ))}
             </>
           )}
         </div>
@@ -139,34 +158,39 @@ export default function RoomPage() {
   );
 }
 
-function ItemCard({ item, onEdit, onDelete, onToggleLB }) {
+function ItemCard({ item, onEdit, onDelete }) {
   const band = VALUE_BANDS[item.valueBand] || VALUE_BANDS[0];
   return (
-    <div className={`item-card${item.leaveBehind ? ' leave-behind' : ''}`}>
+    <div className={`item-card${item.leaveBehind ? ' leave-behind' : ''}`} style={{ padding: '10px 14px' }}>
+      {/* Thumbnail */}
       {item.photoURL ? (
-        <img src={item.photoURL} alt={item.name} />
+        <img src={item.photoURL} alt={item.name} style={{ width: 64, height: 64, borderRadius: 8, objectFit: 'cover', flexShrink: 0 }} />
       ) : (
-        <div style={{ width: 80, height: 80, background: '#f3f4f6', borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 28, flexShrink: 0 }}>📦</div>
+        <div style={{ width: 64, height: 64, background: '#f3f4f6', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24, flexShrink: 0 }}>📦</div>
       )}
-      <div className="item-card-body">
-        <div className="item-card-title">{item.name}</div>
-        <div className="item-card-badges">
-          <span className="badge badge-gray">Qty: {item.quantity}</span>
-          <span className={`badge vc-${item.valueBand}`}>{band.label}</span>
-          <span className="badge badge-teal">📦 Box: {item.boxNumber}</span>
-          {item.leaveBehind && <span className="badge badge-red">🚫 Leave Behind</span>}
+
+      <div className="item-card-body" style={{ gap: 4 }}>
+        {/* Line 1: Name + storage/lb badges */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+          <span className="item-card-title" style={{ fontSize: 15, fontWeight: 700 }}>{item.name}</span>
+          {item.isStorage && (
+            <span style={{ background: '#ede9fe', color: '#5b21b6', borderRadius: 999, fontSize: 11, fontWeight: 700, padding: '2px 8px' }}>📦 Storage</span>
+          )}
+          {item.leaveBehind && (
+            <span style={{ background: '#fee2e2', color: '#991b1b', borderRadius: 999, fontSize: 11, fontWeight: 700, padding: '2px 8px' }}>🚫 Leave Behind</span>
+          )}
         </div>
-        {item.notes && <p style={{ fontSize: 13, color: '#718096', marginTop: 4 }}>{item.notes}</p>}
-        <div className="item-card-actions">
-          <button className="btn btn-ghost" style={{ padding: '6px 12px', fontSize: 13 }} onClick={onEdit}>✏️ Edit</button>
-          <button
-            onClick={onToggleLB}
-            className="btn"
-            style={{ padding: '6px 12px', fontSize: 13, background: item.leaveBehind ? '#d1fae5' : '#fef3c7', color: item.leaveBehind ? '#065f46' : '#92400e', border: 'none' }}
-          >
-            {item.leaveBehind ? '✅ Moving it' : '🚫 Leave behind'}
-          </button>
-          <button className="btn btn-danger" style={{ padding: '6px 12px', fontSize: 13 }} onClick={onDelete}>🗑️</button>
+
+        {/* Line 2: Qty + Value + Box + actions */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+          <span className="badge badge-gray" style={{ fontSize: 12 }}>Qty: {item.quantity}</span>
+          <span className={`badge vc-${item.valueBand}`} style={{ fontSize: 12 }}>{band.label}</span>
+          <span className="badge badge-teal" style={{ fontSize: 12 }}>📦 Box: {item.boxNumber}</span>
+          {item.notes && <span style={{ fontSize: 12, color: '#94a3b8', fontStyle: 'italic' }}>{item.notes}</span>}
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
+            <button className="btn btn-ghost" style={{ padding: '4px 10px', fontSize: 12 }} onClick={onEdit}>✏️ Edit</button>
+            <button className="btn btn-danger" style={{ padding: '4px 10px', fontSize: 12 }} onClick={onDelete}>🗑️</button>
+          </div>
         </div>
       </div>
     </div>
