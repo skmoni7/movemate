@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { VALUE_BANDS, validateBoxNumber } from '../utils';
 
-const EMPTY = { name: '', quantity: 1, valueBand: 0, boxNumber: '', notes: '', leaveBehind: false, isStorage: false, photoURL: null, photoPath: null };
+const EMPTY = { name: '', quantity: 1, valueBand: 0, boxNumber: '', notes: '', leaveBehind: false, isStorage: false, isSensitive: false, photoURL: null, photoPath: null };
 const GEMINI_API_KEY = process.env.REACT_APP_GEMINI_API_KEY;
 
 export default function ItemForm({ initial, onSave, onClose }) {
@@ -13,6 +13,7 @@ export default function ItemForm({ initial, onSave, onClose }) {
     notes: initial.notes || '',
     leaveBehind: initial.leaveBehind || false,
     isStorage: initial.isStorage || false,
+    isSensitive: initial.isSensitive || false,
     photoURL: initial.photoURL || null,
     photoPath: initial.photoPath || null,
   } : { ...EMPTY });
@@ -55,9 +56,9 @@ export default function ItemForm({ initial, onSave, onClose }) {
         setSuggestions(parsed.slice(0, 5));
         setShowSuggestions(true);
       }
+      setAiLoading(false);
     } catch (err) {
-      console.error('Gemini error:', err);
-    } finally {
+      console.error('Gemini suggestion error:', err);
       setAiLoading(false);
     }
   }, []);
@@ -66,11 +67,12 @@ export default function ItemForm({ initial, onSave, onClose }) {
     const val = e.target.value;
     set('name', val);
     setErrors(v => ({ ...v, name: '' }));
-    setSuggestions([]);
-    setShowSuggestions(false);
     if (debounceRef.current) clearTimeout(debounceRef.current);
     if (val.trim().length >= 2) {
-      debounceRef.current = setTimeout(() => fetchGeminiSuggestions(val.trim()), 500);
+      debounceRef.current = setTimeout(() => fetchGeminiSuggestions(val.trim()), 800);
+    } else {
+      setSuggestions([]);
+      setShowSuggestions(false);
     }
   };
 
@@ -80,259 +82,257 @@ export default function ItemForm({ initial, onSave, onClose }) {
     setShowSuggestions(false);
   };
 
-  useEffect(() => {
-    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
-  }, []);
-
-  const validate = () => {
-    const e = {};
-    if (!form.name.trim()) e.name = 'Item name is required';
-    const qty = Number(form.quantity);
-    if (!Number.isInteger(qty) || qty < 1) e.quantity = 'Quantity must be a whole number >= 1';
-    if (!validateBoxNumber(form.boxNumber)) e.boxNumber = 'Enter a box number (e.g. 1, 2, 14) or "NA"';
-    return e;
-  };
-
   const handlePhoto = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    setPhotoFile(file);
-    setPhotoPreview(URL.createObjectURL(file));
-    // reset input so same file can be re-selected
-    e.target.value = '';
+    const file = e.target.files?.[0];
+    if (file) {
+      setPhotoFile(file);
+      const reader = new FileReader();
+      reader.onloadend = () => setPhotoPreview(reader.result);
+      reader.readAsDataURL(file);
+      set('_newPhotoFile', true);
+    }
   };
 
   const removePhoto = () => {
     setPhotoFile(null);
     setPhotoPreview(null);
-    setForm(f => ({ ...f, photoURL: null, photoPath: null }));
-    if (cameraRef.current) cameraRef.current.value = '';
-    if (galleryRef.current) galleryRef.current.value = '';
+    set('photoURL', null);
+    set('photoPath', null);
+    set('_newPhotoFile', false);
+  };
+
+  const validate = () => {
+    const e = {};
+    if (!form.name.trim()) e.name = 'Required';
+    if (!form.quantity || form.quantity < 1) e.quantity = 'Must be at least 1';
+    const boxErr = validateBoxNumber(form.boxNumber);
+    if (boxErr) e.boxNumber = boxErr;
+    return e;
   };
 
   const handleSubmit = async () => {
     const e = validate();
-    if (Object.keys(e).length > 0) { setErrors(e); return; }
+    if (Object.keys(e).length > 0) {
+      setErrors(e);
+      return;
+    }
     setSaving(true);
     await onSave({ ...form, quantity: Number(form.quantity), boxNumber: form.boxNumber.trim().toUpperCase() }, photoFile);
     setSaving(false);
   };
 
+  useEffect(() => {
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, []);
+
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-box" onClick={e => e.stopPropagation()}>
-        <div className="modal-header">
-          <h2 className="modal-title">{initial ? 'Edit Item' : 'Add Item'}</h2>
-          <button style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: '#718096' }} onClick={onClose}>✕</button>
-        </div>
-
-        {/* Name with Gemini AI suggestions */}
-        <div className="form-group" style={{ position: 'relative' }}>
-          <label>Item Name *</label>
-          <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
-            <input
-              className={`form-control${errors.name ? ' error' : ''}`}
-              value={form.name}
-              onChange={handleNameChange}
-              onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
-              onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}
-              placeholder="e.g. Samsung TV"
-              autoFocus
-              style={{ paddingRight: aiLoading ? '36px' : undefined }}
-            />
-            {aiLoading && (
-              <div style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)' }}>
-                <div style={{
-                  width: 16, height: 16, border: '2px solid #e2e8f0',
-                  borderTop: '2px solid #2563eb', borderRadius: '50%',
-                  animation: 'spin 0.7s linear infinite'
-                }} />
-              </div>
-            )}
-          </div>
-          {showSuggestions && suggestions.length > 0 && (
-            <div style={{
-              position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 100,
-              background: 'white', border: '1.5px solid #e2e8f0', borderRadius: '8px',
-              boxShadow: '0 4px 16px rgba(0,0,0,0.10)', overflow: 'hidden', marginTop: 2
-            }}>
-              <div style={{ padding: '6px 12px 4px', fontSize: 11, color: '#94a3b8', borderBottom: '1px solid #f1f5f9', display: 'flex', alignItems: 'center', gap: 4 }}>
-                <span style={{ fontSize: 13 }}>✨</span> AI suggestions
-              </div>
-              {suggestions.map((s, i) => (
-                <div
-                  key={i}
-                  onMouseDown={() => handleSuggestionClick(s)}
-                  style={{
-                    padding: '9px 14px', cursor: 'pointer', fontSize: 14,
-                    color: '#1e293b', borderBottom: i < suggestions.length - 1 ? '1px solid #f8fafc' : 'none',
-                    transition: 'background 0.1s'
-                  }}
-                  onMouseEnter={e => e.currentTarget.style.background = '#f0f7ff'}
-                  onMouseLeave={e => e.currentTarget.style.background = 'white'}
-                >
-                  {s}
-                </div>
-              ))}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+      {/* Name */}
+      <div style={{ position: 'relative' }}>
+        <label style={{ display: 'block', fontWeight: 600, fontSize: '13px', marginBottom: '4px', color: '#374151' }}>Item Name *</label>
+        <input
+          style={{
+            width: '100%', padding: '10px', fontSize: '15px', border: `1px solid ${errors.name ? '#ef4444' : '#d1d5db'}`,
+            borderRadius: '8px', outline: 'none'
+          }}
+          value={form.name}
+          onChange={handleNameChange}
+          onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
+          onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}
+          placeholder="e.g. Samsung 65\" TV"
+        />
+        {aiLoading && <span style={{ fontSize: '12px', color: '#9ca3af', marginTop: '2px' }}>✨ Loading suggestions...</span>}
+        {showSuggestions && suggestions.length > 0 && (
+          <div style={{
+            position: 'absolute', top: '100%', left: 0, right: 0, background: '#fff',
+            border: '1px solid #d1d5db', borderRadius: '8px', marginTop: '4px',
+            boxShadow: '0 4px 6px rgba(0,0,0,0.1)', zIndex: 1000, maxHeight: '200px', overflowY: 'auto'
+          }}>
+            <div style={{ padding: '8px 12px', fontSize: '11px', fontWeight: 600, color: '#7c3aed', borderBottom: '1px solid #e5e7eb' }}>
+              ✨ AI Suggestions
             </div>
-          )}
-          {errors.name && <span className="error-text">{errors.name}</span>}
-        </div>
-
-        {/* Quantity */}
-        <div className="form-group">
-          <label>Quantity *</label>
-          <input
-            className={`form-control${errors.quantity ? ' error' : ''}`}
-            type="number"
-            min="1"
-            step="1"
-            value={form.quantity}
-            onChange={e => { set('quantity', e.target.value); setErrors(v => ({ ...v, quantity: '' })); }}
-          />
-          {errors.quantity && <span className="error-text">{errors.quantity}</span>}
-        </div>
-
-        {/* Value Band */}
-        <div className="form-group">
-          <label>Value Category *</label>
-          <select
-            className="form-control"
-            value={form.valueBand}
-            onChange={e => set('valueBand', Number(e.target.value))}
-          >
-            {VALUE_BANDS.map((b, i) => <option key={i} value={i}>{b.label}</option>)}
-          </select>
-        </div>
-
-        {/* Box Number */}
-        <div className="form-group">
-          <label>Box Number * <span style={{ fontWeight: 400, color: '#718096', fontSize: 12 }}>(enter a number like 1, 2, 14 or "NA")</span></label>
-          <input
-            className={`form-control${errors.boxNumber ? ' error' : ''}`}
-            value={form.boxNumber}
-            onChange={e => { set('boxNumber', e.target.value); setErrors(v => ({ ...v, boxNumber: '' })); }}
-            placeholder="e.g. 1 or NA"
-          />
-          {errors.boxNumber && <span className="error-text">{errors.boxNumber}</span>}
-        </div>
-
-        {/* Notes */}
-        <div className="form-group">
-          <label>Notes <span style={{ fontWeight: 400, color: '#718096', fontSize: 12 }}>(optional)</span></label>
-          <textarea
-            className="form-control"
-            rows={2}
-            value={form.notes}
-            onChange={e => set('notes', e.target.value)}
-            placeholder="Condition, special handling notes..."
-          />
-        </div>
-
-        {/* Photo */}
-        <div className="form-group">
-          <label>Photo <span style={{ fontWeight: 400, color: '#718096', fontSize: 12 }}>(optional)</span></label>
-          {photoPreview ? (
-            <div style={{ position: 'relative', display: 'inline-block' }}>
-              <img src={photoPreview} alt="preview" className="photo-preview" style={{ display: 'block' }} />
-              <button
-                onClick={removePhoto}
-                style={{ position: 'absolute', top: 8, right: 8, background: '#ef4444', color: 'white', border: 'none', borderRadius: '50%', width: 28, height: 28, cursor: 'pointer', fontSize: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 6px rgba(0,0,0,0.2)' }}
-              >✕</button>
-            </div>
-          ) : (
-            <div style={{ display: 'flex', gap: 10 }}>
-              {/* Take Photo — opens rear camera on mobile */}
-              <button
-                type="button"
-                onClick={() => cameraRef.current?.click()}
+            {suggestions.map((s, i) => (
+              <div
+                key={i}
+                onClick={() => handleSuggestionClick(s)}
                 style={{
-                  flex: 1, padding: '14px 10px', border: '2px dashed #93c5fd',
-                  borderRadius: 10, background: '#eff6ff', cursor: 'pointer',
-                  display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6
+                  padding: '10px 12px', fontSize: '14px', cursor: 'pointer',
+                  borderBottom: i < suggestions.length - 1 ? '1px solid #f3f4f6' : 'none'
                 }}
+                onMouseEnter={(e) => e.currentTarget.style.background = '#f9fafb'}
+                onMouseLeave={(e) => e.currentTarget.style.background = '#fff'}
               >
-                <span style={{ fontSize: 26 }}>📷</span>
-                <span style={{ fontSize: 13, fontWeight: 600, color: '#2563eb' }}>Take Photo</span>
-                <span style={{ fontSize: 11, color: '#94a3b8' }}>Opens camera</span>
-              </button>
-
-              {/* Choose from Gallery */}
-              <button
-                type="button"
-                onClick={() => galleryRef.current?.click()}
-                style={{
-                  flex: 1, padding: '14px 10px', border: '2px dashed #d1d5db',
-                  borderRadius: 10, background: '#f9fafb', cursor: 'pointer',
-                  display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6
-                }}
-              >
-                <span style={{ fontSize: 26 }}>🖼️</span>
-                <span style={{ fontSize: 13, fontWeight: 600, color: '#374151' }}>From Library</span>
-                <span style={{ fontSize: 11, color: '#94a3b8' }}>Choose existing</span>
-              </button>
-            </div>
-          )}
-
-          {/* Camera input — triggers rear camera on mobile */}
-          <input
-            ref={cameraRef}
-            type="file"
-            accept="image/*"
-            capture="environment"
-            onChange={handlePhoto}
-            style={{ display: 'none' }}
-          />
-          {/* Gallery input — no capture, shows full file picker / photo library */}
-          <input
-            ref={galleryRef}
-            type="file"
-            accept="image/*"
-            onChange={handlePhoto}
-            style={{ display: 'none' }}
-          />
-        </div>
-
-        {/* Storage Toggle */}
-        <div className="form-group">
-          <div className="toggle-wrapper">
-            <button
-              className={`toggle${form.isStorage ? ' on' : ''}`}
-              onClick={() => set('isStorage', !form.isStorage)}
-              type="button"
-            />
-            <span className={`toggle-label${form.isStorage ? ' on' : ''}`}>
-              {form.isStorage ? '📦 Marked as Storage Item' : 'Mark as Storage Item'}
-            </span>
+                {s}
+              </div>
+            ))}
           </div>
-        </div>
-
-        {/* Exclude from Move Toggle */}
-        <div className="form-group">
-          <div className="toggle-wrapper">
-            <button
-              className={`toggle${form.leaveBehind ? ' on' : ''}`}
-              onClick={() => set('leaveBehind', !form.leaveBehind)}
-              type="button"
-            />
-            <span className={`toggle-label${form.leaveBehind ? ' on' : ''}`}>
-              {form.leaveBehind ? '🚫 Excluded from move' : 'Exclude from move'}
-            </span>
-          </div>
-        </div>
-
-        {/* Actions */}
-        <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 8 }}>
-          <button className="btn btn-ghost" onClick={onClose} disabled={saving}>Cancel</button>
-          <button className="btn btn-primary" onClick={handleSubmit} disabled={saving}>
-            {saving ? 'Saving...' : initial ? 'Save Changes' : 'Add Item'}
-          </button>
-        </div>
+        )}
+        {errors.name && <span style={{ fontSize: '12px', color: '#ef4444', marginTop: '2px' }}>{errors.name}</span>}
       </div>
 
-      <style>{`
-        @keyframes spin { to { transform: translateY(-50%) rotate(360deg); } }
-      `}</style>
+      {/* Quantity */}
+      <div>
+        <label style={{ display: 'block', fontWeight: 600, fontSize: '13px', marginBottom: '4px', color: '#374151' }}>Quantity *</label>
+        <input
+          type="number"
+          min="1"
+          step="1"
+          style={{
+            width: '100%', padding: '10px', fontSize: '15px', border: `1px solid ${errors.quantity ? '#ef4444' : '#d1d5db'}`,
+            borderRadius: '8px', outline: 'none'
+          }}
+          value={form.quantity}
+          onChange={e => { set('quantity', e.target.value); setErrors(v => ({ ...v, quantity: '' })); }}
+        />
+        {errors.quantity && <span style={{ fontSize: '12px', color: '#ef4444', marginTop: '2px' }}>{errors.quantity}</span>}
+      </div>
+
+      {/* Value Band */}
+      <div>
+        <label style={{ display: 'block', fontWeight: 600, fontSize: '13px', marginBottom: '4px', color: '#374151' }}>Value Category *</label>
+        <select
+          style={{
+            width: '100%', padding: '10px', fontSize: '15px', border: '1px solid #d1d5db',
+            borderRadius: '8px', outline: 'none', background: '#fff'
+          }}
+          value={form.valueBand}
+          onChange={e => set('valueBand', Number(e.target.value))}
+        >
+          {VALUE_BANDS.map((b, i) => <option key={i} value={i}>{b.label}</option>)}
+        </select>
+      </div>
+
+      {/* Box Number */}
+      <div>
+        <label style={{ display: 'block', fontWeight: 600, fontSize: '13px', marginBottom: '4px', color: '#374151' }}>Box Number *</label>
+        <input
+          style={{
+            width: '100%', padding: '10px', fontSize: '15px', border: `1px solid ${errors.boxNumber ? '#ef4444' : '#d1d5db'}`,
+            borderRadius: '8px', outline: 'none', textTransform: 'uppercase'
+          }}
+          value={form.boxNumber}
+          onChange={e => { set('boxNumber', e.target.value); setErrors(v => ({ ...v, boxNumber: '' })); }}
+          placeholder="e.g. 1 or NA"
+        />
+        {errors.boxNumber && <span style={{ fontSize: '12px', color: '#ef4444', marginTop: '2px' }}>{errors.boxNumber}</span>}
+      </div>
+
+      {/* Notes */}
+      <div>
+        <label style={{ display: 'block', fontWeight: 600, fontSize: '13px', marginBottom: '4px', color: '#374151' }}>Notes (optional)</label>
+        <textarea
+          rows={2}
+          style={{
+            width: '100%', padding: '10px', fontSize: '15px', border: '1px solid #d1d5db',
+            borderRadius: '8px', outline: 'none', fontFamily: 'inherit', resize: 'vertical'
+          }}
+          value={form.notes}
+          onChange={e => set('notes', e.target.value)}
+          placeholder="Any extra details..."
+        />
+      </div>
+
+      {/* Photo */}
+      <div>
+        <label style={{ display: 'block', fontWeight: 600, fontSize: '13px', marginBottom: '4px', color: '#374151' }}>Photo (optional)</label>
+        {photoPreview ? (
+          <div style={{ position: 'relative', display: 'inline-block' }}>
+            <img
+              src={photoPreview}
+              alt="preview"
+              style={{ width: '120px', height: '120px', objectFit: 'cover', borderRadius: '8px', border: '1px solid #d1d5db' }}
+            />
+            <button
+              type="button"
+              onClick={removePhoto}
+              style={{
+                position: 'absolute', top: '4px', right: '4px', background: '#ef4444', color: '#fff',
+                border: 'none', borderRadius: '50%', width: '28px', height: '28px', cursor: 'pointer', fontSize: '16px'
+              }}
+            >×</button>
+          </div>
+        ) : (
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button
+              type="button"
+              onClick={() => cameraRef.current?.click()}
+              style={{
+                flex: 1, padding: '10px', background: '#ede9fe', color: '#7c3aed', border: 'none',
+                borderRadius: '8px', cursor: 'pointer', fontSize: '14px', fontWeight: 600
+              }}
+            >📷 Take Photo</button>
+            <button
+              type="button"
+              onClick={() => galleryRef.current?.click()}
+              style={{
+                flex: 1, padding: '10px', background: '#ede9fe', color: '#7c3aed', border: 'none',
+                borderRadius: '8px', cursor: 'pointer', fontSize: '14px', fontWeight: 600
+              }}
+            >🖼️ From Library</button>
+          </div>
+        )}
+        <input ref={cameraRef} type="file" accept="image/*" capture="environment" onChange={handlePhoto} style={{ display: 'none' }} />
+        <input ref={galleryRef} type="file" accept="image/*" onChange={handlePhoto} style={{ display: 'none' }} />
+      </div>
+
+      {/* Checkboxes */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '8px' }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', fontSize: '14px' }}>
+          <input
+            type="checkbox"
+            checked={form.isStorage}
+            onChange={e => set('isStorage', e.target.checked)}
+            style={{ width: '18px', height: '18px', cursor: 'pointer' }}
+          />
+          <span>📦 Mark as <strong>Storage Item</strong></span>
+        </label>
+        <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', fontSize: '14px' }}>
+          <input
+            type="checkbox"
+            checked={form.isSensitive}
+            onChange={e => set('isSensitive', e.target.checked)}
+            style={{ width: '18px', height: '18px', cursor: 'pointer' }}
+          />
+          <span>🚗 Mark as <strong>Sensitive Item</strong> (carry in personal vehicle)</span>
+        </label>
+        <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', fontSize: '14px' }}>
+          <input
+            type="checkbox"
+            checked={form.leaveBehind}
+            onChange={e => set('leaveBehind', e.target.checked)}
+            style={{ width: '18px', height: '18px', cursor: 'pointer' }}
+          />
+          <span>🚫 <strong>Leave Behind</strong> (exclude from move)</span>
+        </label>
+      </div>
+
+      {/* Actions */}
+      <div style={{ display: 'flex', gap: '10px', marginTop: '16px' }}>
+        <button
+          type="button"
+          onClick={onClose}
+          disabled={saving}
+          style={{
+            flex: 1, padding: '12px', background: '#f3f4f6', color: '#374151', border: 'none',
+            borderRadius: '8px', cursor: saving ? 'not-allowed' : 'pointer', fontSize: '15px', fontWeight: 600
+          }}
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={handleSubmit}
+          disabled={saving}
+          style={{
+            flex: 1, padding: '12px', background: saving ? '#d1d5db' : '#7c3aed', color: '#fff', border: 'none',
+            borderRadius: '8px', cursor: saving ? 'not-allowed' : 'pointer', fontSize: '15px', fontWeight: 600
+          }}
+        >
+          {saving ? 'Saving...' : initial ? 'Save Changes' : 'Add Item'}
+        </button>
+      </div>
     </div>
   );
 }
