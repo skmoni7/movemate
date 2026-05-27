@@ -120,7 +120,11 @@ export default function ItemForm({ initial, onSave, onClose }) {
       return;
     }
     setSaving(true);
-    await onSave({ ...form, quantity: Number(form.quantity), boxNumber: form.boxNumber.trim().toUpperCase() }, photoFile);
+    
+    // The .toString() here prevents crashes if the box number is an integer
+    const safeBoxNumber = form.boxNumber ? form.boxNumber.toString().trim().toUpperCase() : 'NA';
+    
+    await onSave({ ...form, quantity: Number(form.quantity), boxNumber: safeBoxNumber }, photoFile);
     setSaving(false);
   };
 
