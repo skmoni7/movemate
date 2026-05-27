@@ -64,7 +64,7 @@ async function compressToBase64(file, maxBytes = 150 * 1024) {
 }
 
 export default function RoomPage() {
-  const { roomId } = useParams();
+  const { id: roomId } = useParams(); // This maps the URL 'id' to your 'roomId' variable
   const location = useLocation();
   const roomName = location.state?.roomName || roomId;
   const { user } = useContext(AuthContext);
@@ -236,15 +236,16 @@ function ItemCard({ item, onEdit, onDelete, dimmed }) {
               padding: '1px 6px', borderRadius: '999px', fontWeight: 600
             }}>📦 Storage</span>
           )}
-          {item.leaveBehind && (
-            <span style={{
-              background: '#fee2e2' }}>
-                          {item.isSensitive && (
+          {item.isSensitive && (
             <span style={{
               background: '#dcfce7', color: '#16a34a', fontSize: '11px',
               padding: '1px 6px', borderRadius: '999px', fontWeight: 600
             }}>🚗 Sensitive</span>
-          )}e2', color: '#ef4444', fontSize: '11px',
+          )}
+          
+          {item.leaveBehind && (
+            <span style={{
+              background: '#fee2e2', color: '#ef4444', fontSize: '11px',
               padding: '1px 6px', borderRadius: '999px', fontWeight: 600
             }}>🚫 Leave Behind</span>
           )}
