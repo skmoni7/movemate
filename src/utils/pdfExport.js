@@ -6,16 +6,23 @@ const STYLES = `
        background: #f1f5f9; border-left: 4px solid #2563eb; border-radius: 4px; }
   h2.uncategorised { border-left-color: #f59e0b; background: #fffbeb; }
   h2.storage-header { border-left-color: #7c3aed; background: #f5f3ff; }
+  h2.sensitive-header { border-left-color: #16a34a; background: #f0fdf4; }
   h1.storage-title { color: #7c3aed; font-size: 20px; margin: 40px 0 4px; padding-top: 24px; border-top: 2px dashed #c4b5fd; }
-  table { width: 100%; border-collapse: collapse; margin-bottom: 8px; font-size: 13px; }
-  th { background: #e2e8f0; color: #475569; padding: 7px 10px; text-align: left; font-size: 12px; text-transform: uppercase; }
-  td { border-bottom: 1px solid #f1f5f9; padding: 7px 10px; vertical-align: top; }
+  h1.sensitive-title { color: #16a34a; font-size: 20px; margin: 40px 0 4px; padding-top: 24px; border-top: 2px dashed #bbf7d0; }
+  
+  /* --- 80% SCALED LINE ITEMS --- */
+  table { width: 100%; border-collapse: collapse; margin-bottom: 8px; font-size: 10.5px; }
+  th { background: #e2e8f0; color: #475569; padding: 5px 8px; text-align: left; font-size: 9.5px; text-transform: uppercase; }
+  td { border-bottom: 1px solid #f1f5f9; padding: 5px 8px; vertical-align: top; }
   tr:last-child td { border-bottom: none; }
-  .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+  .badge { display: inline-block; padding: 1.5px 6px; border-radius: 999px; font-size: 9px; font-weight: 600; margin-right: 3px; margin-bottom: 2px; }
+  /* ------------------------------- */
+
   .badge-box { background: #dbeafe; color: #1e40af; }
   .badge-lb { background: #fee2e2; color: #991b1b; }
   .badge-storage { background: #ede9fe; color: #5b21b6; }
-  .empty { color: #94a3b8; font-style: italic; font-size: 13px; padding: 8px 0; }
+  .badge-sensitive { background: #dcfce7; color: #16a34a; }
+  .empty { color: #94a3b8; font-style: italic; font-size: 10.5px; padding: 6px 0; }
   .footer { margin-top: 32px; padding-top: 12px; border-top: 1px solid #e2e8f0;
             font-size: 11px; color: #94a3b8; text-align: center; }
 `;
@@ -38,6 +45,7 @@ function buildItemTable(items, extraCol) {
   items.forEach(item => {
     const lb = item.leaveBehind ? '<span class="badge badge-lb">Excluded</span>' : '';
     const storage = item.isStorage ? '<span class="badge badge-storage">📦 Storage</span>' : '';
+    const sensitive = item.isSensitive ? '<span class="badge badge-sensitive">🚗 Sensitive</span>' : '';
     const extraVal = hasExtra ? `<td>${item._extraCol || ''}</td>` : '';
     html += `<tr>
       <td><strong>${item.name || ''}</strong></td>
@@ -45,7 +53,7 @@ function buildItemTable(items, extraCol) {
       <td><span class="badge badge-box">${item.boxNumber || 'N/A'}</span></td>
       <td>${item.valueBand !== undefined ? item.valueBand : ''}</td>
       <td>${item.notes || ''}</td>
-      <td>${lb}${storage}</td>
+      <td>${lb}${storage}${sensitive}</td>
       ${extraVal}
     </tr>`;
   });
@@ -57,11 +65,9 @@ function buildStorageSection(allItems, rooms) {
   const storageItems = allItems.filter(i => i.isStorage);
   if (storageItems.length === 0) return '';
 
-  // Build room lookup map
   const roomMap = {};
   if (rooms) rooms.forEach(r => { roomMap[r.id] = r; });
 
-  // Group by box number
   const boxMap = {};
   storageItems.forEach(item => {
     const key = (item.boxNumber && item.boxNumber.trim() !== '' && item.boxNumber.trim().toUpperCase() !== 'NA')
@@ -92,6 +98,27 @@ function buildStorageSection(allItems, rooms) {
   return html;
 }
 
+function buildSensitiveSection(allItems, rooms) {
+  const sensitiveItems = allItems.filter(i => i.isSensitive);
+  if (sensitiveItems.length === 0) return '';
+
+  const roomMap = {};
+  if (rooms) rooms.forEach(r => { roomMap[r.id] = r; });
+
+  let html = `<h1 class="sensitive-title">🚗 Sensitive Items Report</h1>`;
+  html += `<p class="subtitle">Personal transport only — DO NOT pack in moving truck (${sensitiveItems.length} total)</p>`;
+
+  const mappedItems = sensitiveItems.map(item => ({
+    ...item,
+    _extraCol: roomMap[item.roomId] ? `${roomMap[item.roomId].icon || ''} ${roomMap[item.roomId].name}` : (item.roomId || 'No Room')
+  })).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+
+  html += `<h2 class="sensitive-header">Chain of Custody: User Vehicle</h2>`;
+  html += buildItemTable(mappedItems, 'Room');
+
+  return html;
+}
+
 function openPrintWindow(html, title) {
   const win = window.open('', '_blank');
   win.document.write(html);
@@ -107,7 +134,6 @@ export function exportByRoom(rooms, allItems, moveTitle) {
 
   let hasAnyItem = false;
   rooms.forEach(room => {
-    // Sort room items by box number (Box 1 first, then alphabetical)
     const roomItems = allItems
       .filter(i => i.roomId === room.id)
       .sort((a, b) => {
@@ -122,7 +148,6 @@ export function exportByRoom(rooms, allItems, moveTitle) {
     html += buildItemTable(roomItems);
   });
 
-  // Uncategorised: items with no matching room
   const roomIds = rooms.map(r => r.id);
   const uncategorised = allItems.filter(i => !i.roomId || !roomIds.includes(i.roomId));
   if (uncategorised.length > 0) {
@@ -134,8 +159,8 @@ export function exportByRoom(rooms, allItems, moveTitle) {
     html += '<p class="empty">No items found.</p>';
   }
 
-  // Storage section at the end
   html += buildStorageSection(allItems, rooms);
+  html += buildSensitiveSection(allItems, rooms); // Adds the new Sensitive section
 
   html += `<div class="footer">Generated by MoveMate &bull; ${title} &bull; ${date} &bull; Developed with ❤️ by skm</div>`;
   html += '</body></html>';
@@ -148,7 +173,6 @@ export function exportByBox(rooms, allItems, moveTitle) {
   let html = `<html><head><title>${title} - By Box</title><style>${STYLES}</style></head><body>`;
   html += `<h1>📦 ${title} — Inventory by Box Number</h1><p class="subtitle">Exported on ${date}</p>`;
 
-  // Group items by boxNumber
   const boxMap = {};
   allItems.forEach(item => {
     const key = (item.boxNumber && item.boxNumber.trim() !== '' && item.boxNumber.trim().toUpperCase() !== 'NA')
@@ -160,19 +184,16 @@ export function exportByBox(rooms, allItems, moveTitle) {
     }
   });
 
-  // Box 1 first, then alphabetical
   const sortedKeys = sortBoxKeys(Object.keys(boxMap));
 
   if (sortedKeys.length > 0) {
     sortedKeys.forEach(boxKey => {
-      // Within each box, sort items alphabetically by name
       const boxItems = [...boxMap[boxKey]].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
       html += `<h2>📦 Box ${boxKey} (${boxItems.length} item${boxItems.length !== 1 ? 's' : ''})</h2>`;
       html += buildItemTable(boxItems);
     });
   }
 
-  // Uncategorised: items with no box number or NA
   const uncategorised = allItems.filter(i => !i.boxNumber || i.boxNumber.trim() === '' || i.boxNumber.trim().toUpperCase() === 'NA');
   if (uncategorised.length > 0) {
     html += `<h2 class="uncategorised">⚠️ Uncategorised / No Box (${uncategorised.length})</h2>`;
@@ -183,15 +204,14 @@ export function exportByBox(rooms, allItems, moveTitle) {
     html += '<p class="empty">No items found.</p>';
   }
 
-  // Storage section at the end
   html += buildStorageSection(allItems, rooms);
+  html += buildSensitiveSection(allItems, rooms); // Adds the new Sensitive section
 
   html += `<div class="footer">Generated by MoveMate &bull; ${title} &bull; ${date} &bull; Developed with ❤️ by skm</div>`;
   html += '</body></html>';
   openPrintWindow(html, title);
 }
 
-// Keep original export as alias for backwards compat
 export function exportToPDF(rooms, allItems, moveTitle) {
   exportByRoom(rooms, allItems, moveTitle);
 }
