@@ -6,7 +6,7 @@ import { AuthContext } from '../App';
 import { VALUE_BANDS, getSummary } from '../utils';
 import ItemForm from './ItemForm';
 
-// Compress image and return base64 string (JPEG, max ~150KB base64)
+// Compress image and return base64 string (JPEG, max ~150KB)
 async function compressToBase64(file, maxBytes = 150 * 1024) {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -29,26 +29,6 @@ async function compressToBase64(file, maxBytes = 150 * 1024) {
       canvas.height = height;
       const ctx = canvas.getContext('2d');
       ctx.drawImage(img, 0, 0, width, height);
-      let lo = 0.1, hi = 0.85, quality = 0.5;
-      let result = null;
-      const iterate = (lo, hi, iters) => {
-        quality = (lo + hi) / 2;
-        canvas.toBlob((blob) => {
-          if (!blob) { reject(new Error('Canvas toBlob failed')); return; }
-          result = blob;
-          if (iters <= 0 || Math.abs(blob.size - maxBytes) < 3000) {
-            const reader = new FileReader();
-            reader.onloadend = () => resolve(reader.result);
-            reader.onerror = reject;
-            reader.readAsDataURL(blob);
-          } else if (blob.size > maxBytes) {
-            iterate(lo, quality, iters - 1);
-          } else {
-            iterate(quality, hi, iters - 1);
-          }
-        }, 'image/jpeg', quality);
-      };
-      // Quick first try at 0.7
       canvas.toBlob((blob) => {
         if (!blob) { reject(new Error('Canvas toBlob failed')); return; }
         if (blob.size <= maxBytes) {
@@ -57,7 +37,24 @@ async function compressToBase64(file, maxBytes = 150 * 1024) {
           reader.onerror = reject;
           reader.readAsDataURL(blob);
         } else {
-          iterate(0.1, 0.7, 8);
+          let lo = 0.1, hi = 0.7;
+          const iterate = (lo, hi, iters) => {
+            const q = (lo + hi) / 2;
+            canvas.toBlob((b) => {
+              if (!b) { reject(new Error('toBlob failed')); return; }
+              if (iters <= 0 || Math.abs(b.size - maxBytes) < 3000) {
+                const reader = new FileReader();
+                reader.onloadend = () => resolve(reader.result);
+                reader.onerror = reject;
+                reader.readAsDataURL(b);
+              } else if (b.size > maxBytes) {
+                iterate(lo, q, iters - 1);
+              } else {
+                iterate(q, hi, iters - 1);
+              }
+            }, 'image/jpeg', q);
+          };
+          iterate(lo, hi, 8);
         }
       }, 'image/jpeg', 0.7);
     };
@@ -89,26 +86,22 @@ export default function RoomPage() {
     return unsub;
   }, [user, roomId]);
 
+  const closeForm = () => { setShowForm(false); setEditItem(null); };
+
   const saveItem = async (formData, photoFile) => {
     setSavingItem(true);
     try {
-      const { _newPhotoFile, ...data } = formData;
-
-      // If there's a new photo, compress and convert to base64
+      const { _newPhotoFile, photoPath, ...data } = formData;
       if (photoFile) {
         try {
-          const base64 = await compressToBase64(photoFile, 150 * 1024);
-          data.photoURL = base64;
+          data.photoURL = await compressToBase64(photoFile, 150 * 1024);
         } catch (err) {
           console.error('Image compression failed:', err);
         }
+      } else if (editItem && editItem.photoURL && !photoFile) {
+        data.photoURL = editItem.photoURL;
       }
-
       if (editItem) {
-        // Keep old photo if no new one provided
-        if (!photoFile && editItem.photoURL) {
-          data.photoURL = editItem.photoURL;
-        }
         await updateDoc(
           doc(db, 'users', user.uid, 'rooms', roomId, 'items', editItem.id),
           { ...data, updatedAt: Date.now() }
@@ -119,8 +112,7 @@ export default function RoomPage() {
           { ...data, createdAt: Date.now() }
         );
       }
-      setShowForm(false);
-      setEditItem(null);
+      closeForm();
     } catch (err) {
       console.error('Save item error:', err);
       alert('Error saving item: ' + err.message);
@@ -167,22 +159,20 @@ export default function RoomPage() {
           }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '16px' }}>
               <h3 style={{ margin: 0 }}>{editItem ? 'Edit Item' : 'Add Item'}</h3>
-              <button
-                onClick={() => { setShowForm(false); setEditItem(null); }}
+              <button onClick={closeForm}
                 style={{ background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer' }}
               >×</button>
             </div>
             <ItemForm
               initial={editItem}
               onSave={saveItem}
-              onCancel={() => { setShowForm(false); setEditItem(null); }}
+              onClose={closeForm}
               saving={savingItem}
             />
           </div>
         </div>
       )}
 
-      {/* Moving Items */}
       {movingItems.length === 0 && leaveBehindItems.length === 0 && (
         <p style={{ color: '#9ca3af', textAlign: 'center', marginTop: '40px' }}>No items yet. Tap + Add Item to start.</p>
       )}
@@ -196,7 +186,6 @@ export default function RoomPage() {
         />
       ))}
 
-      {/* Leave Behind Section */}
       {leaveBehindItems.length > 0 && (
         <div style={{ marginTop: '24px' }}>
           <h4 style={{ color: '#ef4444', marginBottom: '8px', fontSize: '14px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
@@ -226,7 +215,6 @@ function ItemCard({ item, onEdit, onDelete, dimmed }) {
       borderRadius: '10px', padding: '10px', marginBottom: '8px',
       opacity: dimmed ? 0.8 : 1
     }}>
-      {/* Thumbnail */}
       <div style={{
         width: '60px', height: '60px', borderRadius: '8px',
         background: '#f3f4f6', flexShrink: 0, overflow: 'hidden',
@@ -239,10 +227,7 @@ function ItemCard({ item, onEdit, onDelete, dimmed }) {
           <span style={{ fontSize: '24px' }}>📦</span>
         )}
       </div>
-
-      {/* Content */}
       <div style={{ flex: 1, minWidth: 0 }}>
-        {/* Line 1: Name + badges */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', marginBottom: '4px' }}>
           <span style={{ fontWeight: 600, fontSize: '15px' }}>{item.name}</span>
           {item.isStorage && (
@@ -258,7 +243,6 @@ function ItemCard({ item, onEdit, onDelete, dimmed }) {
             }}>🚫 Leave Behind</span>
           )}
         </div>
-        {/* Line 2: Details + actions */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', fontSize: '12px', color: '#6b7280' }}>
           {item.quantity && <span>Qty: {item.quantity}</span>}
           {item.value && <span>· {item.value}</span>}
