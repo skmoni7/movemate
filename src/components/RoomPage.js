@@ -7,6 +7,73 @@ import { AuthContext } from '../App';
 import { VALUE_BANDS, getSummary } from '../utils';
 import ItemForm from './ItemForm';
 
+// Compress image file to target max size using Canvas API
+// Returns a new File object (JPEG) under maxBytes
+async function compressImage(file, maxBytes = 200 * 1024) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    const objectUrl = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(objectUrl);
+      const canvas = document.createElement('canvas');
+      let { width, height } = img;
+
+      // Scale down if image is very large (max 1200px on longest side)
+      const MAX_DIM = 1200;
+      if (width > MAX_DIM || height > MAX_DIM) {
+        if (width > height) {
+          height = Math.round((height * MAX_DIM) / width);
+          width = MAX_DIM;
+        } else {
+          width = Math.round((width * MAX_DIM) / height);
+          height = MAX_DIM;
+        }
+      }
+
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, width, height);
+
+      // Binary search for quality that hits target size
+      let lo = 0.1, hi = 0.92, quality = 0.7;
+      let blob;
+      const attempt = (q, cb) => canvas.toBlob(cb, 'image/jpeg', q);
+
+      const iterate = (lo, hi, iterations) => {
+        quality = (lo + hi) / 2;
+        attempt(quality, (b) => {
+          blob = b;
+          if (iterations <= 0 || Math.abs(b.size - maxBytes) < 5000) {
+            // Done — wrap blob as File
+            const compressed = new File([b], file.name.replace(/\.[^.]+$/, '.jpg'), { type: 'image/jpeg' });
+            resolve(compressed);
+          } else if (b.size > maxBytes) {
+            iterate(lo, quality, iterations - 1);
+          } else {
+            iterate(quality, hi, iterations - 1);
+          }
+        });
+      };
+
+      // First check — if already under limit, return as-is
+      attempt(0.92, (b) => {
+        if (b.size <= maxBytes) {
+          const compressed = new File([b], file.name.replace(/\.[^.]+$/, '.jpg'), { type: 'image/jpeg' });
+          resolve(compressed);
+        } else {
+          iterate(lo, hi, 8); // up to 8 iterations to find right quality
+        }
+      });
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      resolve(file); // fallback to original on error
+    };
+    img.src = objectUrl;
+  });
+}
+
 export default function RoomPage() {
   const { roomId } = useParams();
   const location = useLocation();
@@ -31,17 +98,18 @@ export default function RoomPage() {
     return unsub;
   }, [roomId, user.uid]);
 
-  // Upload photo in background after item is saved, then update Firestore record
   const uploadPhotoInBackground = async (itemDocId, photoFile, oldPhotoPath) => {
     setUploadingIds(prev => new Set(prev).add(itemDocId));
     try {
       if (oldPhotoPath) {
         try { await deleteObject(ref(storage, oldPhotoPath)); } catch (_) {}
       }
-      const safeFileName = photoFile.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+      // Compress before upload
+      const compressed = await compressImage(photoFile, 200 * 1024);
+      const safeFileName = compressed.name.replace(/[^a-zA-Z0-9._-]/g, '_');
       const photoPath = `users/${user.uid}/rooms/${roomId}/${Date.now()}_${safeFileName}`;
       const storageRef = ref(storage, photoPath);
-      const uploadSnap = await uploadBytes(storageRef, photoFile);
+      const uploadSnap = await uploadBytes(storageRef, compressed);
       const photoURL = await getDownloadURL(uploadSnap.ref);
       await updateDoc(doc(db, 'users', user.uid, 'rooms', roomId, 'items', itemDocId), {
         photoURL,
@@ -56,13 +124,9 @@ export default function RoomPage() {
   };
 
   const saveItem = async (formData, photoFile) => {
-    // Strip internal-only fields
     const { _newPhotoFile, ...cleanData } = formData;
-
-    // Save item immediately without waiting for photo upload
     const data = {
       ...cleanData,
-      // Keep existing photoURL/photoPath if no new file selected
       photoURL: photoFile ? null : (cleanData.photoURL || null),
       photoPath: photoFile ? null : (cleanData.photoPath || null),
       roomId,
@@ -78,11 +142,9 @@ export default function RoomPage() {
       itemDocId = docRef.id;
     }
 
-    // Close modal immediately
     setShowForm(false);
     setEditItem(null);
 
-    // Upload photo in background if one was selected
     if (photoFile && itemDocId) {
       const oldPath = editItem?.photoPath || null;
       uploadPhotoInBackground(itemDocId, photoFile, oldPath);
@@ -103,7 +165,6 @@ export default function RoomPage() {
 
   return (
     <div>
-      {/* Breadcrumb + header */}
       <div style={{ marginBottom: 20 }}>
         <Link to="/" style={{ color: '#2563eb', fontSize: 14, textDecoration: 'none' }}>← All Rooms</Link>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 10, flexWrap: 'wrap', gap: 12 }}>
@@ -118,7 +179,6 @@ export default function RoomPage() {
         </div>
       </div>
 
-      {/* Summary bar */}
       {activeItems.length > 0 && (
         <div className="card" style={{ marginBottom: 20, display: 'flex', gap: 16, flexWrap: 'wrap', padding: '16px 20px' }}>
           {VALUE_BANDS.map((b, i) => (
@@ -130,7 +190,6 @@ export default function RoomPage() {
         </div>
       )}
 
-      {/* Items */}
       {loading ? (
         <div style={{ textAlign: 'center', padding: 60 }}><div className="spinner" /></div>
       ) : items.length === 0 ? (
@@ -171,7 +230,6 @@ export default function RoomPage() {
         </div>
       )}
 
-      {/* Item Form Modal */}
       {showForm && (
         <ItemForm
           initial={editItem}
@@ -188,7 +246,6 @@ function ItemCard({ item, onEdit, onDelete, uploading }) {
   const band = VALUE_BANDS[item.valueBand] || VALUE_BANDS[0];
   return (
     <div className={`item-card${item.leaveBehind ? ' leave-behind' : ''}`} style={{ padding: '10px 14px' }}>
-      {/* Thumbnail */}
       <div style={{ position: 'relative', flexShrink: 0 }}>
         {item.photoURL ? (
           <img src={item.photoURL} alt={item.name} style={{ width: 64, height: 64, borderRadius: 8, objectFit: 'cover', display: 'block' }} />
@@ -196,31 +253,19 @@ function ItemCard({ item, onEdit, onDelete, uploading }) {
           <div style={{ width: 64, height: 64, background: '#f3f4f6', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24 }}>📦</div>
         )}
         {uploading && (
-          <div style={{
-            position: 'absolute', inset: 0, background: 'rgba(255,255,255,0.75)',
-            borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center'
-          }}>
+          <div style={{ position: 'absolute', inset: 0, background: 'rgba(255,255,255,0.8)', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <div style={{ width: 20, height: 20, border: '2.5px solid #e2e8f0', borderTop: '2.5px solid #2563eb', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} />
           </div>
         )}
       </div>
 
       <div className="item-card-body" style={{ gap: 4 }}>
-        {/* Line 1: Name + badges */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
           <span className="item-card-title" style={{ fontSize: 15, fontWeight: 700 }}>{item.name}</span>
-          {item.isStorage && (
-            <span style={{ background: '#ede9fe', color: '#5b21b6', borderRadius: 999, fontSize: 11, fontWeight: 700, padding: '2px 8px' }}>📦 Storage</span>
-          )}
-          {item.leaveBehind && (
-            <span style={{ background: '#fee2e2', color: '#991b1b', borderRadius: 999, fontSize: 11, fontWeight: 700, padding: '2px 8px' }}>🚫 Leave Behind</span>
-          )}
-          {uploading && (
-            <span style={{ background: '#dbeafe', color: '#1d4ed8', borderRadius: 999, fontSize: 11, fontWeight: 600, padding: '2px 8px' }}>⏳ Uploading photo...</span>
-          )}
+          {item.isStorage && <span style={{ background: '#ede9fe', color: '#5b21b6', borderRadius: 999, fontSize: 11, fontWeight: 700, padding: '2px 8px' }}>📦 Storage</span>}
+          {item.leaveBehind && <span style={{ background: '#fee2e2', color: '#991b1b', borderRadius: 999, fontSize: 11, fontWeight: 700, padding: '2px 8px' }}>🚫 Leave Behind</span>}
+          {uploading && <span style={{ background: '#dbeafe', color: '#1d4ed8', borderRadius: 999, fontSize: 11, fontWeight: 600, padding: '2px 8px' }}>⏳ Uploading photo...</span>}
         </div>
-
-        {/* Line 2: Qty + Value + Box + notes + actions */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
           <span className="badge badge-gray" style={{ fontSize: 12 }}>Qty: {item.quantity}</span>
           <span className={`badge vc-${item.valueBand}`} style={{ fontSize: 12 }}>{band.label}</span>
