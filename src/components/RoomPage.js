@@ -64,7 +64,7 @@ async function compressToBase64(file, maxBytes = 150 * 1024) {
 }
 
 export default function RoomPage() {
-  const { id: roomId } = useParams(); // This maps the URL 'id' to your 'roomId' variable
+  const { roomId } = useParams();
   const location = useLocation();
   const roomName = location.state?.roomName || roomId;
   const user = useContext(AuthContext);
