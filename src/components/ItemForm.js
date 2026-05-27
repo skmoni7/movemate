@@ -291,16 +291,25 @@ export default function ItemForm({ initial, onSave, onClose }) {
           <input
             type="checkbox"
             checked={form.isStorage}
-            onChange={e => set('isStorage', e.target.checked)}
+            onChange={e => {
+              const checked = e.target.checked;
+              set('isStorage', checked);
+              if (checked) set('isSensitive', false); // Turn off Sensitive if Storage is checked
+            }}
             style={{ width: '18px', height: '18px', cursor: 'pointer' }}
           />
           <span>📦 Mark as <strong>Storage Item</strong></span>
         </label>
+        
         <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', fontSize: '14px' }}>
           <input
             type="checkbox"
             checked={form.isSensitive}
-            onChange={e => set('isSensitive', e.target.checked)}
+            onChange={e => {
+              const checked = e.target.checked;
+              set('isSensitive', checked);
+              if (checked) set('isStorage', false); // Turn off Storage if Sensitive is checked
+            }}
             style={{ width: '18px', height: '18px', cursor: 'pointer' }}
           />
           <span>🚗 Mark as <strong>Sensitive Item</strong> (carry in personal vehicle)</span>
