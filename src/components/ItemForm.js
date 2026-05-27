@@ -141,7 +141,7 @@ export default function ItemForm({ initial, onSave, onClose }) {
           onChange={handleNameChange}
           onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
           onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}
-          placeholder="e.g. Samsung 65\" TV"
+          placeholder="e.g. Samsung 65in TV"
         />
         {aiLoading && <span style={{ fontSize: '12px', color: '#9ca3af', marginTop: '2px' }}>✨ Loading suggestions...</span>}
         {showSuggestions && suggestions.length > 0 && (
