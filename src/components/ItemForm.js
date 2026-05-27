@@ -105,8 +105,11 @@ export default function ItemForm({ initial, onSave, onClose }) {
     const e = {};
     if (!form.name.trim()) e.name = 'Required';
     if (!form.quantity || form.quantity < 1) e.quantity = 'Must be at least 1';
-    const boxErr = validateBoxNumber(form.boxNumber);
-    if (boxErr) e.boxNumber = boxErr;
+    
+    if (!form.boxNumber || !form.boxNumber.toString().trim()) {
+      e.boxNumber = 'Box number is required (enter a number or NA)';
+    }
+    
     return e;
   };
 
