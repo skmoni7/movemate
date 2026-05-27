@@ -242,7 +242,6 @@ function ItemCard({ item, onEdit, onDelete, dimmed }) {
               padding: '1px 6px', borderRadius: '999px', fontWeight: 600
             }}>🚗 Sensitive</span>
           )}
-          
           {item.leaveBehind && (
             <span style={{
               background: '#fee2e2', color: '#ef4444', fontSize: '11px',
