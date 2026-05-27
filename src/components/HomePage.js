@@ -34,14 +34,14 @@ export default function HomePage() {
     rooms.forEach(room => {
       const iRef = collection(db, 'users', user.uid, 'rooms', room.id, 'items');
       const unsub = onSnapshot(iRef, snap => {
-        itemMap[room.id] = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        // The roomId: room.id tag is added here so the PDF knows its origin
+        itemMap[room.id] = snap.docs.map(d => ({ id: d.id, roomId: room.id, ...d.data() }));
         setAllItems(Object.values(itemMap).flat());
       });
       unsubs.push(unsub);
     });
     return () => unsubs.forEach(u => u());
   }, [rooms, user.uid]);
-
     useEffect(() => {
     localStorage.setItem('moveTitle', moveTitle);
   }, [moveTitle]);
