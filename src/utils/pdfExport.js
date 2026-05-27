@@ -5,6 +5,8 @@ const STYLES = `
   h2 { color: #1e293b; font-size: 16px; margin: 24px 0 8px; padding: 8px 12px;
        background: #f1f5f9; border-left: 4px solid #2563eb; border-radius: 4px; }
   h2.uncategorised { border-left-color: #f59e0b; background: #fffbeb; }
+  h2.storage-header { border-left-color: #7c3aed; background: #f5f3ff; }
+  h1.storage-title { color: #7c3aed; font-size: 20px; margin: 40px 0 4px; padding-top: 24px; border-top: 2px dashed #c4b5fd; }
   table { width: 100%; border-collapse: collapse; margin-bottom: 8px; font-size: 13px; }
   th { background: #e2e8f0; color: #475569; padding: 7px 10px; text-align: left; font-size: 12px; text-transform: uppercase; }
   td { border-bottom: 1px solid #f1f5f9; padding: 7px 10px; vertical-align: top; }
@@ -12,26 +14,81 @@ const STYLES = `
   .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
   .badge-box { background: #dbeafe; color: #1e40af; }
   .badge-lb { background: #fee2e2; color: #991b1b; }
+  .badge-storage { background: #ede9fe; color: #5b21b6; }
   .empty { color: #94a3b8; font-style: italic; font-size: 13px; padding: 8px 0; }
   .footer { margin-top: 32px; padding-top: 12px; border-top: 1px solid #e2e8f0;
             font-size: 11px; color: #94a3b8; text-align: center; }
 `;
 
-function buildItemTable(items) {
+// Sort box keys: Box 1 always first, then alphabetical for the rest
+function sortBoxKeys(keys) {
+  return [...keys].sort((a, b) => {
+    const aStr = String(a).toUpperCase();
+    const bStr = String(b).toUpperCase();
+    if (aStr === '1') return -1;
+    if (bStr === '1') return 1;
+    return aStr.localeCompare(bStr, undefined, { numeric: true, sensitivity: 'base' });
+  });
+}
+
+function buildItemTable(items, extraCol) {
   if (items.length === 0) return '<p class="empty">No items</p>';
-  let html = '<table><thead><tr><th>Item</th><th>Qty</th><th>Box #</th><th>Value</th><th>Notes</th><th>Status</th></tr></thead><tbody>';
+  const hasExtra = !!extraCol;
+  let html = `<table><thead><tr><th>Item</th><th>Qty</th><th>Box #</th><th>Value</th><th>Notes</th><th>Status</th>${hasExtra ? `<th>${extraCol}</th>` : ''}</tr></thead><tbody>`;
   items.forEach(item => {
     const lb = item.leaveBehind ? '<span class="badge badge-lb">Excluded</span>' : '';
+    const storage = item.isStorage ? '<span class="badge badge-storage">📦 Storage</span>' : '';
+    const extraVal = hasExtra ? `<td>${item._extraCol || ''}</td>` : '';
     html += `<tr>
       <td><strong>${item.name || ''}</strong></td>
       <td>${item.quantity || 1}</td>
       <td><span class="badge badge-box">${item.boxNumber || 'N/A'}</span></td>
       <td>${item.valueBand !== undefined ? item.valueBand : ''}</td>
       <td>${item.notes || ''}</td>
-      <td>${lb}</td>
+      <td>${lb}${storage}</td>
+      ${extraVal}
     </tr>`;
   });
   html += '</tbody></table>';
+  return html;
+}
+
+function buildStorageSection(allItems, rooms) {
+  const storageItems = allItems.filter(i => i.isStorage);
+  if (storageItems.length === 0) return '';
+
+  // Build room lookup map
+  const roomMap = {};
+  if (rooms) rooms.forEach(r => { roomMap[r.id] = r; });
+
+  // Group by box number
+  const boxMap = {};
+  storageItems.forEach(item => {
+    const key = (item.boxNumber && item.boxNumber.trim() !== '' && item.boxNumber.trim().toUpperCase() !== 'NA')
+      ? item.boxNumber.trim().toUpperCase()
+      : 'NO BOX';
+    if (!boxMap[key]) boxMap[key] = [];
+    boxMap[key].push(item);
+  });
+
+  const sortedKeys = sortBoxKeys(Object.keys(boxMap));
+
+  let html = `<h1 class="storage-title">📦 Storage Items Report</h1>`;
+  html += `<p class="subtitle">All items marked as storage (${storageItems.length} total)</p>`;
+
+  sortedKeys.forEach(boxKey => {
+    const boxItems = boxMap[boxKey]
+      .map(item => ({
+        ...item,
+        _extraCol: roomMap[item.roomId] ? `${roomMap[item.roomId].icon || ''} ${roomMap[item.roomId].name}` : (item.roomId || 'No Room')
+      }))
+      .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+
+    const label = boxKey === 'NO BOX' ? '⚠️ No Box Assigned' : `📦 Box ${boxKey}`;
+    html += `<h2 class="storage-header">${label} (${boxItems.length} item${boxItems.length !== 1 ? 's' : ''})</h2>`;
+    html += buildItemTable(boxItems, 'Room');
+  });
+
   return html;
 }
 
@@ -50,7 +107,16 @@ export function exportByRoom(rooms, allItems, moveTitle) {
 
   let hasAnyItem = false;
   rooms.forEach(room => {
-    const roomItems = allItems.filter(i => i.roomId === room.id);
+    // Sort room items by box number (Box 1 first, then alphabetical)
+    const roomItems = allItems
+      .filter(i => i.roomId === room.id)
+      .sort((a, b) => {
+        const aKey = (a.boxNumber || 'ZZZ').trim().toUpperCase();
+        const bKey = (b.boxNumber || 'ZZZ').trim().toUpperCase();
+        if (aKey === '1') return -1;
+        if (bKey === '1') return 1;
+        return aKey.localeCompare(bKey, undefined, { numeric: true, sensitivity: 'base' });
+      });
     if (roomItems.length > 0) hasAnyItem = true;
     html += `<h2>${room.icon || '🛏️'} ${room.name} (${roomItems.length})</h2>`;
     html += buildItemTable(roomItems);
@@ -68,6 +134,9 @@ export function exportByRoom(rooms, allItems, moveTitle) {
     html += '<p class="empty">No items found.</p>';
   }
 
+  // Storage section at the end
+  html += buildStorageSection(allItems, rooms);
+
   html += `<div class="footer">Generated by MoveMate &bull; ${title} &bull; ${date} &bull; Developed with ❤️ by skm</div>`;
   html += '</body></html>';
   openPrintWindow(html, title);
@@ -82,24 +151,22 @@ export function exportByBox(rooms, allItems, moveTitle) {
   // Group items by boxNumber
   const boxMap = {};
   allItems.forEach(item => {
-    const key = (item.boxNumber && item.boxNumber.trim() !== '' && item.boxNumber.trim().toUpperCase() !== 'NA') ? item.boxNumber.trim().toUpperCase() : null;    if (key) {
+    const key = (item.boxNumber && item.boxNumber.trim() !== '' && item.boxNumber.trim().toUpperCase() !== 'NA')
+      ? item.boxNumber.trim().toUpperCase()
+      : null;
+    if (key) {
       if (!boxMap[key]) boxMap[key] = [];
       boxMap[key].push(item);
     }
   });
 
-  // Sort box keys: numeric first, then alpha
-  const sortedKeys = Object.keys(boxMap).sort((a, b) => {
-    const na = parseInt(a), nb = parseInt(b);
-    if (!isNaN(na) && !isNaN(nb)) return na - nb;
-    if (!isNaN(na)) return -1;
-    if (!isNaN(nb)) return 1;
-    return a.localeCompare(b);
-  });
+  // Box 1 first, then alphabetical
+  const sortedKeys = sortBoxKeys(Object.keys(boxMap));
 
   if (sortedKeys.length > 0) {
     sortedKeys.forEach(boxKey => {
-      const boxItems = boxMap[boxKey];
+      // Within each box, sort items alphabetically by name
+      const boxItems = [...boxMap[boxKey]].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
       html += `<h2>📦 Box ${boxKey} (${boxItems.length} item${boxItems.length !== 1 ? 's' : ''})</h2>`;
       html += buildItemTable(boxItems);
     });
@@ -116,9 +183,14 @@ export function exportByBox(rooms, allItems, moveTitle) {
     html += '<p class="empty">No items found.</p>';
   }
 
-  html += `<div class="footer">Generated by MoveMate &bull; ${title} &bull; ${date} &bull; Developed with ❤️ by skm</div>`;  html += '</body></html>';
+  // Storage section at the end
+  html += buildStorageSection(allItems, rooms);
+
+  html += `<div class="footer">Generated by MoveMate &bull; ${title} &bull; ${date} &bull; Developed with ❤️ by skm</div>`;
+  html += '</body></html>';
   openPrintWindow(html, title);
 }
+
 // Keep original export as alias for backwards compat
 export function exportToPDF(rooms, allItems, moveTitle) {
   exportByRoom(rooms, allItems, moveTitle);

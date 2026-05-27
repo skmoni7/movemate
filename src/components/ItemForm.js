@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { VALUE_BANDS, validateBoxNumber } from '../utils';
 
-const EMPTY = { name: '', quantity: 1, valueBand: 0, boxNumber: '', notes: '', leaveBehind: false, photoURL: null, photoPath: null };
+const EMPTY = { name: '', quantity: 1, valueBand: 0, boxNumber: '', notes: '', leaveBehind: false, isStorage: false, photoURL: null, photoPath: null };
 const GEMINI_API_KEY = process.env.REACT_APP_GEMINI_API_KEY;
 
 export default function ItemForm({ initial, onSave, onClose }) {
@@ -12,6 +12,7 @@ export default function ItemForm({ initial, onSave, onClose }) {
     boxNumber: initial.boxNumber || '',
     notes: initial.notes || '',
     leaveBehind: initial.leaveBehind || false,
+    isStorage: initial.isStorage || false,
     photoURL: initial.photoURL || null,
     photoPath: initial.photoPath || null,
   } : { ...EMPTY });
@@ -242,7 +243,21 @@ export default function ItemForm({ initial, onSave, onClose }) {
               <div style={{ fontSize: 11, color: '#a0aec0', marginTop: 4 }}>JPG, PNG, WEBP supported</div>
             </div>
           )}
-          <input ref={fileRef} type="file" accept="image/*" onChange={handlePhoto} style={{ display: 'none' }} />
+          <input ref={fileRef} type="file" accept="image/*" capture="environment" onChange={handlePhoto} style={{ display: 'none' }} />
+        </div>
+
+        {/* Storage Toggle */}
+        <div className="form-group">
+          <div className="toggle-wrapper">
+            <button
+              className={`toggle${form.isStorage ? ' on' : ''}`}
+              onClick={() => set('isStorage', !form.isStorage)}
+              type="button"
+            />
+            <span className={`toggle-label${form.isStorage ? ' on' : ''}`}>
+              {form.isStorage ? '📦 Marked as Storage Item' : 'Mark as Storage Item'}
+            </span>
+          </div>
         </div>
 
         {/* Exclude from Move Toggle */}
