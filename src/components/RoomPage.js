@@ -1,25 +1,21 @@
 import React, { useState, useEffect, useContext } from 'react';
 import { useParams, useLocation, Link } from 'react-router-dom';
 import { collection, addDoc, onSnapshot, deleteDoc, doc, updateDoc, query, orderBy } from 'firebase/firestore';
-import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
-import { db, storage } from '../firebase';
+import { db } from '../firebase';
 import { AuthContext } from '../App';
 import { VALUE_BANDS, getSummary } from '../utils';
 import ItemForm from './ItemForm';
 
-// Compress image file to target max size using Canvas API
-// Returns a new File object (JPEG) under maxBytes
-async function compressImage(file, maxBytes = 200 * 1024) {
-  return new Promise((resolve) => {
+// Compress image and return base64 string (JPEG, max ~150KB base64)
+async function compressToBase64(file, maxBytes = 150 * 1024) {
+  return new Promise((resolve, reject) => {
     const img = new Image();
     const objectUrl = URL.createObjectURL(file);
     img.onload = () => {
       URL.revokeObjectURL(objectUrl);
       const canvas = document.createElement('canvas');
       let { width, height } = img;
-
-      // Scale down if image is very large (max 1200px on longest side)
-      const MAX_DIM = 1200;
+      const MAX_DIM = 800;
       if (width > MAX_DIM || height > MAX_DIM) {
         if (width > height) {
           height = Math.round((height * MAX_DIM) / width);
@@ -29,47 +25,43 @@ async function compressImage(file, maxBytes = 200 * 1024) {
           height = MAX_DIM;
         }
       }
-
       canvas.width = width;
       canvas.height = height;
       const ctx = canvas.getContext('2d');
       ctx.drawImage(img, 0, 0, width, height);
-
-      // Binary search for quality that hits target size
-      let lo = 0.1, hi = 0.92, quality = 0.7;
-      let blob;
-      const attempt = (q, cb) => canvas.toBlob(cb, 'image/jpeg', q);
-
-      const iterate = (lo, hi, iterations) => {
+      let lo = 0.1, hi = 0.85, quality = 0.5;
+      let result = null;
+      const iterate = (lo, hi, iters) => {
         quality = (lo + hi) / 2;
-        attempt(quality, (b) => {
-          blob = b;
-          if (iterations <= 0 || Math.abs(b.size - maxBytes) < 5000) {
-            // Done — wrap blob as File
-            const compressed = new File([b], file.name.replace(/\.[^.]+$/, '.jpg'), { type: 'image/jpeg' });
-            resolve(compressed);
-          } else if (b.size > maxBytes) {
-            iterate(lo, quality, iterations - 1);
+        canvas.toBlob((blob) => {
+          if (!blob) { reject(new Error('Canvas toBlob failed')); return; }
+          result = blob;
+          if (iters <= 0 || Math.abs(blob.size - maxBytes) < 3000) {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result);
+            reader.onerror = reject;
+            reader.readAsDataURL(blob);
+          } else if (blob.size > maxBytes) {
+            iterate(lo, quality, iters - 1);
           } else {
-            iterate(quality, hi, iterations - 1);
+            iterate(quality, hi, iters - 1);
           }
-        });
+        }, 'image/jpeg', quality);
       };
-
-      // First check — if already under limit, return as-is
-      attempt(0.92, (b) => {
-        if (b.size <= maxBytes) {
-          const compressed = new File([b], file.name.replace(/\.[^.]+$/, '.jpg'), { type: 'image/jpeg' });
-          resolve(compressed);
+      // Quick first try at 0.7
+      canvas.toBlob((blob) => {
+        if (!blob) { reject(new Error('Canvas toBlob failed')); return; }
+        if (blob.size <= maxBytes) {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result);
+          reader.onerror = reject;
+          reader.readAsDataURL(blob);
         } else {
-          iterate(lo, hi, 8); // up to 8 iterations to find right quality
+          iterate(0.1, 0.7, 8);
         }
-      });
+      }, 'image/jpeg', 0.7);
     };
-    img.onerror = () => {
-      URL.revokeObjectURL(objectUrl);
-      resolve(file); // fallback to original on error
-    };
+    img.onerror = reject;
     img.src = objectUrl;
   });
 }
@@ -77,208 +69,213 @@ async function compressImage(file, maxBytes = 200 * 1024) {
 export default function RoomPage() {
   const { roomId } = useParams();
   const location = useLocation();
-  const user = useContext(AuthContext);
-  const roomName = location.state?.roomName || 'Room';
-  const roomIcon = location.state?.roomIcon || '🛏️';
+  const roomName = location.state?.roomName || roomId;
+  const { user } = useContext(AuthContext);
 
   const [items, setItems] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const [editItem, setEditItem] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [uploadingIds, setUploadingIds] = useState(new Set());
-
-  const itemsRef = collection(db, 'users', user.uid, 'rooms', roomId, 'items');
+  const [savingItem, setSavingItem] = useState(false);
 
   useEffect(() => {
-    const q = query(itemsRef, orderBy('createdAt', 'asc'));
-    const unsub = onSnapshot(q, snap => {
-      setItems(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-      setLoading(false);
+    if (!user) return;
+    const q = query(
+      collection(db, 'users', user.uid, 'rooms', roomId, 'items'),
+      orderBy('createdAt', 'asc')
+    );
+    const unsub = onSnapshot(q, (snap) => {
+      setItems(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
     });
     return unsub;
-  }, [roomId, user.uid]);
-
-  const uploadPhotoInBackground = async (itemDocId, photoFile, oldPhotoPath) => {
-    setUploadingIds(prev => new Set(prev).add(itemDocId));
-    try {
-      if (oldPhotoPath) {
-        try { await deleteObject(ref(storage, oldPhotoPath)); } catch (_) {}
-      }
-      // Compress before upload
-      const compressed = await compressImage(photoFile, 200 * 1024);
-      const safeFileName = compressed.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-      const photoPath = `users/${user.uid}/rooms/${roomId}/${Date.now()}_${safeFileName}`;
-      const storageRef = ref(storage, photoPath);
-      const uploadSnap = await uploadBytes(storageRef, compressed);
-      const photoURL = await getDownloadURL(uploadSnap.ref);
-      await updateDoc(doc(db, 'users', user.uid, 'rooms', roomId, 'items', itemDocId), {
-        photoURL,
-        photoPath,
-        updatedAt: Date.now()
-      });
-    } catch (err) {
-      console.error('Background photo upload failed:', err);
-    } finally {
-      setUploadingIds(prev => { const s = new Set(prev); s.delete(itemDocId); return s; });
-    }
-  };
+  }, [user, roomId]);
 
   const saveItem = async (formData, photoFile) => {
-    const { _newPhotoFile, ...cleanData } = formData;
-    const data = {
-      ...cleanData,
-      photoURL: photoFile ? null : (cleanData.photoURL || null),
-      photoPath: photoFile ? null : (cleanData.photoPath || null),
-      roomId,
-      updatedAt: Date.now()
-    };
+    setSavingItem(true);
+    try {
+      const { _newPhotoFile, ...data } = formData;
 
-    let itemDocId;
-    if (editItem) {
-      itemDocId = editItem.id;
-      await updateDoc(doc(db, 'users', user.uid, 'rooms', roomId, 'items', editItem.id), data);
-    } else {
-      const docRef = await addDoc(itemsRef, { ...data, createdAt: Date.now() });
-      itemDocId = docRef.id;
-    }
+      // If there's a new photo, compress and convert to base64
+      if (photoFile) {
+        try {
+          const base64 = await compressToBase64(photoFile, 150 * 1024);
+          data.photoURL = base64;
+        } catch (err) {
+          console.error('Image compression failed:', err);
+        }
+      }
 
-    setShowForm(false);
-    setEditItem(null);
-
-    if (photoFile && itemDocId) {
-      const oldPath = editItem?.photoPath || null;
-      uploadPhotoInBackground(itemDocId, photoFile, oldPath);
+      if (editItem) {
+        // Keep old photo if no new one provided
+        if (!photoFile && editItem.photoURL) {
+          data.photoURL = editItem.photoURL;
+        }
+        await updateDoc(
+          doc(db, 'users', user.uid, 'rooms', roomId, 'items', editItem.id),
+          { ...data, updatedAt: Date.now() }
+        );
+      } else {
+        await addDoc(
+          collection(db, 'users', user.uid, 'rooms', roomId, 'items'),
+          { ...data, createdAt: Date.now() }
+        );
+      }
+      setShowForm(false);
+      setEditItem(null);
+    } catch (err) {
+      console.error('Save item error:', err);
+      alert('Error saving item: ' + err.message);
+    } finally {
+      setSavingItem(false);
     }
   };
 
-  const deleteItem = async (item) => {
+  const deleteItem = async (itemId) => {
     if (!window.confirm('Delete this item?')) return;
-    if (item.photoPath) {
-      try { await deleteObject(ref(storage, item.photoPath)); } catch (_) {}
-    }
-    await deleteDoc(doc(db, 'users', user.uid, 'rooms', roomId, 'items', item.id));
+    await deleteDoc(doc(db, 'users', user.uid, 'rooms', roomId, 'items', itemId));
   };
 
-  const activeItems = items.filter(i => !i.leaveBehind);
-  const leaveBehindItems = items.filter(i => i.leaveBehind);
-  const summary = getSummary(activeItems);
+  const leaveBehindItems = items.filter((i) => i.leaveBehind);
+  const movingItems = items.filter((i) => !i.leaveBehind);
 
   return (
-    <div>
-      <div style={{ marginBottom: 20 }}>
-        <Link to="/" style={{ color: '#2563eb', fontSize: 14, textDecoration: 'none' }}>← All Rooms</Link>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 10, flexWrap: 'wrap', gap: 12 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <span style={{ fontSize: 32 }}>{roomIcon}</span>
-            <div>
-              <h2 style={{ fontSize: 22, fontWeight: 800 }}>{roomName}</h2>
-              <p style={{ fontSize: 13, color: '#718096' }}>{activeItems.length} items to move{leaveBehindItems.length > 0 ? ` · ${leaveBehindItems.length} leaving behind` : ''}</p>
-            </div>
-          </div>
-          <button className="btn btn-primary" onClick={() => { setEditItem(null); setShowForm(true); }}>+ Add Item</button>
-        </div>
+    <div style={{ padding: '16px', maxWidth: '600px', margin: '0 auto' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
+        <Link to="/" style={{ textDecoration: 'none', color: '#6b7280', fontSize: '14px' }}>
+          ← Back
+        </Link>
+        <h2 style={{ margin: 0, fontSize: '20px', flex: 1 }}>{roomName}</h2>
+        <button
+          onClick={() => { setEditItem(null); setShowForm(true); }}
+          style={{
+            background: '#7c3aed', color: '#fff', border: 'none',
+            borderRadius: '8px', padding: '8px 16px', cursor: 'pointer', fontSize: '14px'
+          }}
+        >
+          + Add Item
+        </button>
       </div>
 
-      {activeItems.length > 0 && (
-        <div className="card" style={{ marginBottom: 20, display: 'flex', gap: 16, flexWrap: 'wrap', padding: '16px 20px' }}>
-          {VALUE_BANDS.map((b, i) => (
-            <div key={i} style={{ textAlign: 'center' }}>
-              <div style={{ fontSize: 11, color: '#718096', fontWeight: 600 }}>{b.label}</div>
-              <div className={`badge vc-${i}`} style={{ fontSize: 18, fontWeight: 800, padding: '4px 12px', marginTop: 4 }}>{summary[i]}</div>
+      {showForm && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)',
+          zIndex: 1000, display: 'flex', alignItems: 'flex-end', justifyContent: 'center'
+        }}>
+          <div style={{
+            background: '#fff', borderRadius: '16px 16px 0 0',
+            padding: '24px', width: '100%', maxWidth: '600px',
+            maxHeight: '90vh', overflowY: 'auto'
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '16px' }}>
+              <h3 style={{ margin: 0 }}>{editItem ? 'Edit Item' : 'Add Item'}</h3>
+              <button
+                onClick={() => { setShowForm(false); setEditItem(null); }}
+                style={{ background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer' }}
+              >×</button>
             </div>
-          ))}
+            <ItemForm
+              initial={editItem}
+              onSave={saveItem}
+              onCancel={() => { setShowForm(false); setEditItem(null); }}
+              saving={savingItem}
+            />
+          </div>
         </div>
       )}
 
-      {loading ? (
-        <div style={{ textAlign: 'center', padding: 60 }}><div className="spinner" /></div>
-      ) : items.length === 0 ? (
-        <div className="card" style={{ textAlign: 'center', padding: 60 }}>
-          <div style={{ fontSize: 40, marginBottom: 12 }}>📷</div>
-          <h3 style={{ fontWeight: 700, marginBottom: 8 }}>No items yet</h3>
-          <p style={{ color: '#718096', marginBottom: 20 }}>Start adding items to this room</p>
-          <button className="btn btn-primary" onClick={() => setShowForm(true)}>+ Add First Item</button>
-        </div>
-      ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 24 }}>
-          {activeItems.map(item => (
+      {/* Moving Items */}
+      {movingItems.length === 0 && leaveBehindItems.length === 0 && (
+        <p style={{ color: '#9ca3af', textAlign: 'center', marginTop: '40px' }}>No items yet. Tap + Add Item to start.</p>
+      )}
+
+      {movingItems.map((item) => (
+        <ItemCard
+          key={item.id}
+          item={item}
+          onEdit={() => { setEditItem(item); setShowForm(true); }}
+          onDelete={() => deleteItem(item.id)}
+        />
+      ))}
+
+      {/* Leave Behind Section */}
+      {leaveBehindItems.length > 0 && (
+        <div style={{ marginTop: '24px' }}>
+          <h4 style={{ color: '#ef4444', marginBottom: '8px', fontSize: '14px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+            🚫 Leave Behind ({leaveBehindItems.length})
+          </h4>
+          {leaveBehindItems.map((item) => (
             <ItemCard
               key={item.id}
               item={item}
               onEdit={() => { setEditItem(item); setShowForm(true); }}
-              onDelete={() => deleteItem(item)}
-              uploading={uploadingIds.has(item.id)}
+              onDelete={() => deleteItem(item.id)}
+              dimmed
             />
           ))}
-          {leaveBehindItems.length > 0 && (
-            <>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '8px 0' }}>
-                <span style={{ fontSize: 16 }}>🚫</span>
-                <span style={{ fontWeight: 700, color: '#991b1b', fontSize: 15 }}>Leave Behind ({leaveBehindItems.length})</span>
-              </div>
-              {leaveBehindItems.map(item => (
-                <ItemCard
-                  key={item.id}
-                  item={item}
-                  onEdit={() => { setEditItem(item); setShowForm(true); }}
-                  onDelete={() => deleteItem(item)}
-                  uploading={uploadingIds.has(item.id)}
-                />
-              ))}
-            </>
-          )}
         </div>
-      )}
-
-      {showForm && (
-        <ItemForm
-          initial={editItem}
-          roomId={roomId}
-          onSave={saveItem}
-          onClose={() => { setShowForm(false); setEditItem(null); }}
-        />
       )}
     </div>
   );
 }
 
-function ItemCard({ item, onEdit, onDelete, uploading }) {
-  const band = VALUE_BANDS[item.valueBand] || VALUE_BANDS[0];
+function ItemCard({ item, onEdit, onDelete, dimmed }) {
   return (
-    <div className={`item-card${item.leaveBehind ? ' leave-behind' : ''}`} style={{ padding: '10px 14px' }}>
-      <div style={{ position: 'relative', flexShrink: 0 }}>
+    <div style={{
+      display: 'flex', gap: '10px', alignItems: 'flex-start',
+      background: dimmed ? '#fef2f2' : '#fff',
+      border: `1px solid ${dimmed ? '#fecaca' : '#e5e7eb'}`,
+      borderRadius: '10px', padding: '10px', marginBottom: '8px',
+      opacity: dimmed ? 0.8 : 1
+    }}>
+      {/* Thumbnail */}
+      <div style={{
+        width: '60px', height: '60px', borderRadius: '8px',
+        background: '#f3f4f6', flexShrink: 0, overflow: 'hidden',
+        display: 'flex', alignItems: 'center', justifyContent: 'center'
+      }}>
         {item.photoURL ? (
-          <img src={item.photoURL} alt={item.name} style={{ width: 64, height: 64, borderRadius: 8, objectFit: 'cover', display: 'block' }} />
+          <img src={item.photoURL} alt={item.name}
+            style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
         ) : (
-          <div style={{ width: 64, height: 64, background: '#f3f4f6', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24 }}>📦</div>
-        )}
-        {uploading && (
-          <div style={{ position: 'absolute', inset: 0, background: 'rgba(255,255,255,0.8)', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <div style={{ width: 20, height: 20, border: '2.5px solid #e2e8f0', borderTop: '2.5px solid #2563eb', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} />
-          </div>
+          <span style={{ fontSize: '24px' }}>📦</span>
         )}
       </div>
 
-      <div className="item-card-body" style={{ gap: 4 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-          <span className="item-card-title" style={{ fontSize: 15, fontWeight: 700 }}>{item.name}</span>
-          {item.isStorage && <span style={{ background: '#ede9fe', color: '#5b21b6', borderRadius: 999, fontSize: 11, fontWeight: 700, padding: '2px 8px' }}>📦 Storage</span>}
-          {item.leaveBehind && <span style={{ background: '#fee2e2', color: '#991b1b', borderRadius: 999, fontSize: 11, fontWeight: 700, padding: '2px 8px' }}>🚫 Leave Behind</span>}
-          {uploading && <span style={{ background: '#dbeafe', color: '#1d4ed8', borderRadius: 999, fontSize: 11, fontWeight: 600, padding: '2px 8px' }}>⏳ Uploading photo...</span>}
+      {/* Content */}
+      <div style={{ flex: 1, minWidth: 0 }}>
+        {/* Line 1: Name + badges */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', marginBottom: '4px' }}>
+          <span style={{ fontWeight: 600, fontSize: '15px' }}>{item.name}</span>
+          {item.isStorage && (
+            <span style={{
+              background: '#ede9fe', color: '#7c3aed', fontSize: '11px',
+              padding: '1px 6px', borderRadius: '999px', fontWeight: 600
+            }}>📦 Storage</span>
+          )}
+          {item.leaveBehind && (
+            <span style={{
+              background: '#fee2e2', color: '#ef4444', fontSize: '11px',
+              padding: '1px 6px', borderRadius: '999px', fontWeight: 600
+            }}>🚫 Leave Behind</span>
+          )}
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-          <span className="badge badge-gray" style={{ fontSize: 12 }}>Qty: {item.quantity}</span>
-          <span className={`badge vc-${item.valueBand}`} style={{ fontSize: 12 }}>{band.label}</span>
-          <span className="badge badge-teal" style={{ fontSize: 12 }}>📦 Box: {item.boxNumber}</span>
-          {item.notes && <span style={{ fontSize: 12, color: '#94a3b8', fontStyle: 'italic' }}>{item.notes}</span>}
-          <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
-            <button className="btn btn-ghost" style={{ padding: '4px 10px', fontSize: 12 }} onClick={onEdit}>✏️ Edit</button>
-            <button className="btn btn-danger" style={{ padding: '4px 10px', fontSize: 12 }} onClick={onDelete}>🗑️</button>
-          </div>
+        {/* Line 2: Details + actions */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', fontSize: '12px', color: '#6b7280' }}>
+          {item.quantity && <span>Qty: {item.quantity}</span>}
+          {item.value && <span>· {item.value}</span>}
+          {item.boxNumber && <span>· Box {item.boxNumber}</span>}
+          {item.notes && <span style={{ fontStyle: 'italic' }}>· {item.notes}</span>}
+          <span style={{ marginLeft: 'auto', display: 'flex', gap: '6px' }}>
+            <button onClick={onEdit} style={{
+              background: '#ede9fe', color: '#7c3aed', border: 'none',
+              borderRadius: '6px', padding: '3px 10px', cursor: 'pointer', fontSize: '12px'
+            }}>Edit</button>
+            <button onClick={onDelete} style={{
+              background: '#fee2e2', color: '#ef4444', border: 'none',
+              borderRadius: '6px', padding: '3px 10px', cursor: 'pointer', fontSize: '12px'
+            }}>Del</button>
+          </span>
         </div>
       </div>
-
-      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
     </div>
   );
 }
