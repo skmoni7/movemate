@@ -208,6 +208,7 @@ export default function ItemForm({ initial, onSave, onClose }) {
       <div>
         <label style={{ display: 'block', fontWeight: 600, fontSize: '13px', marginBottom: '4px', color: '#374151' }}>Box Number *</label>
         <input
+          type="text"
           style={{
             width: '100%', padding: '10px', fontSize: '15px', border: `1px solid ${errors.boxNumber ? '#ef4444' : '#d1d5db'}`,
             borderRadius: '8px', outline: 'none', textTransform: 'uppercase'
